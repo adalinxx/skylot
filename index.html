@@ -183,7 +183,7 @@ const CFG = {
 // weather and the sky stay simulated here. ?offline forces the offline game.
 // The <script type="module"> at the end loads client/skylot.mjs and exposes it
 // as window.SkylotChain; everything about records and rules lives there.
-const DEFAULT_NODE = '', DEFAULT_CHAIN = '';
+const DEFAULT_NODE = 'https://lattice-testnet-apps-iad.fly.dev', DEFAULT_CHAIN = 'Nexus/testnet/skylot-125269';   // the testnet chain, launched 2026-11-06
 const CHAIN = (() => {
   const q = new URLSearchParams(location.search), node = q.get('node') || DEFAULT_NODE, path = q.get('chain') || DEFAULT_CHAIN;
   return { on: !q.has('offline') && !!node && !!path, node, path, bridge: null, lib: null, wallet: undefined, me: null,

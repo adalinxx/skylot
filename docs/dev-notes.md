@@ -283,3 +283,10 @@ To fill in after playtesting. Questions to answer:
 - Does the height race give a reason to come back, or do rivals run away with the top spots?
 - Human views need other players: measure them only once two clients share a world (testnet step).
 - Is renting signs, in either direction, interesting or noise?
+
+## Testnet
+
+- **Chain:** `Nexus/testnet/skylot-125269`, launched 2026-11-06 from `chain/spec.json` and `chain/skylot_policy.wasm` (CID `bafyreibklgjauwc2o7o5adyhg6nfbatmgokoapypu7ulw5gotmuanw65fu`), merge-mined by the operator's Nexus miner.
+- **Read and write:** `https://lattice-testnet-apps-iad.fly.dev` (and its twin in ams), the page's default node.
+- **Faucet:** the genesis premine and the chain's mining rewards go to a test key the operator keeps outside this repository. Players get coin with `node client/faucet.mjs --node https://lattice-testnet-apps-iad.fly.dev --chain Nexus/testnet/skylot-125269 --key <faucet key file> --to <address>`.
+- `?offline` still opens the offline game.
