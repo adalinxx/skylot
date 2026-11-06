@@ -3028,9 +3028,11 @@ if (CHAIN.on) {   // sky ads aren't on chain yet
 }
 // The real grinder (client/grinder.mjs): runs while connected and switched on.
 function chainGrind() {
-  const want = CHAIN.on && state.grinding && CHAIN.me && CHAIN.bridge && CHAIN.bridge.grind && !CHAIN.writing;
+  const want = CHAIN.on && state.grinding && CHAIN.me && CHAIN.bridge && CHAIN.bridge.grind;
   if (CHAIN.grinder && (!want || CHAIN.grinder.address !== CHAIN.me)) { CHAIN.grinder.stop(); CHAIN.grinder = null; CHAIN.grind = null; }
-  if (want && !CHAIN.grinder) {
+  // A write in flight pauses it, keeping its workers: Selfhold's window may need the device.
+  if (CHAIN.grinder) { if (CHAIN.writing) CHAIN.grinder.pause(); else CHAIN.grinder.resume(); }
+  if (want && !CHAIN.grinder && !CHAIN.writing) {
     let paidOut = null;
     CHAIN.grinder = { address: CHAIN.me, ...CHAIN.bridge.grind(CHAIN.me, (st) => {
       // Earnings that fell are a payout: read the balance it raised.

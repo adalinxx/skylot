@@ -145,10 +145,14 @@ try {
   console.log(`✓ the sponsor paid the player ${earned} for the page's work; the HUD shows it`);
   assert.equal(await page.run("localStorage.getItem('curio.grind')"), "on", "the choice is remembered");
   // A write pauses grinding while it is in flight, and it resumes after.
+  await page.run("(window.__g = CHAIN.grinder, 1)");
   await page.run("(() => { CHAIN.writing = 1; chainGrind(); })()");
-  assert.ok(await page.run("!CHAIN.grinder"), "paused while Selfhold writes");
+  await new Promise((r) => setTimeout(r, 3000));
+  assert.equal(await page.run("CHAIN.grind.rate"), 0, "paused while Selfhold writes");
+  assert.match(await page.run("document.getElementById('grindRate').textContent"), /paused while Selfhold writes/);
   await page.run("(() => { CHAIN.writing = 0; chainGrind(); })()");
-  assert.ok(await page.run("!!CHAIN.grinder"), "resumed after");
+  assert.ok(await page.run("CHAIN.grinder === window.__g"), "the same grinder, workers kept");
+  await until("it grinds again", () => page.run("CHAIN.grind.rate > 0"), 30);
   // Off through the chip's switch, so the balances below are the writes' alone.
   await page.run("(() => { const t = document.getElementById('grindToggle'); t.checked = false; t.onchange({ target: t }); })()");
   assert.ok(await page.run("!CHAIN.grinder"));

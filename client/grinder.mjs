@@ -12,13 +12,18 @@ const GPU_BATCH = 1 << 24;   // nonces per GPU dispatch: about a share's work
 const CPU_SLICE = 1 << 20;   // nonces per worker message
 
 /**
- * grind({ sponsor, chain, address, onStatus }) → { stop() }
+ * grind({ sponsor, chain, address, onStatus }) → { pause(), resume(), stop() }
+ * pause() leaves the device to something else (Selfhold working for a write)
+ * and keeps the workers and the GPU; shares already found still go back.
  * onStatus({ rate, device, earned, payoutAt, shares, error }) as it goes:
  * rate in hashes a second, device "GPU" or "CPU ×n", earned in whole coins
  * not yet paid out.
  */
 export function grind({ sponsor, chain, address, onStatus, cores }) {
-  let stopped = false;
+  let stopped = false, paused = false, wake = [];
+  // Run `go` now, or once resumed (or stopped).
+  const whenRunning = (go) => { if (paused && !stopped) wake.push(go); else go(); };
+  const running = () => new Promise(whenRunning);
   const status = { rate: 0, device: '', earned: 0n, payoutAt: null, shares: 0, error: null };
   const tell = () => { try { onStatus?.({ ...status }); } catch {} };
   const post = async (path, body) => {
@@ -30,6 +35,7 @@ export function grind({ sponsor, chain, address, onStatus, cores }) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let hashed = 0, since = performance.now();
   const count = (n) => {
+    if (paused) return;   // a slice finishing after pause() isn't the rate
     hashed += n;
     const now = performance.now();
     if (now - since >= 2000) { status.rate = hashed * 1000 / (now - since); hashed = 0; since = now; tell(); }
@@ -69,6 +75,8 @@ export function grind({ sponsor, chain, address, onStatus, cores }) {
       let start = BigInt(work.startNonce);
       const end = start + BigInt(work.count);
       for (; start < end && !stopped; start += BigInt(GPU_BATCH)) {
+        if (paused) await running();
+        if (stopped) break;
         const n = Number(end - start < BigInt(GPU_BATCH) ? end - start : BigInt(GPU_BATCH));
         let found;
         try { found = await job.run(start, n); } catch (e) { throw Object.assign(e, { gpu: true }); }
@@ -89,6 +97,7 @@ export function grind({ sponsor, chain, address, onStatus, cores }) {
       const settle = () => { if (live === 0) failed ? reject(failed) : resolve(); };
       const feed = (worker) => {
         if (stopped || stale || next >= end) { settle(); return; }
+        if (paused) { whenRunning(() => feed(worker)); return; }
         const n = end - next < BigInt(CPU_SLICE) ? end - next : BigInt(CPU_SLICE);
         live++; worker.postMessage({ prefixHex: work.prefixHex, targetHex: work.shareTarget, start: String(next), count: String(n) });
         next += n;
@@ -114,6 +123,8 @@ export function grind({ sponsor, chain, address, onStatus, cores }) {
     await earnings();
     let lastEarnings = performance.now();
     while (!stopped) {
+      if (paused) await running();
+      if (stopped) break;
       let work;
       try { work = await post('work', { chain, payTo: address }); status.error = null; }
       catch (e) {
@@ -139,5 +150,10 @@ export function grind({ sponsor, chain, address, onStatus, cores }) {
     for (const w of workers ?? []) w.terminate();
   })();
 
-  return { stop() { stopped = true; status.rate = 0; tell(); } };
+  const release = () => { const woken = wake; wake = []; for (const go of woken) go(); };
+  return {
+    pause() { if (paused || stopped) return; paused = true; status.rate = 0; hashed = 0; tell(); },
+    resume() { if (!paused) return; paused = false; since = performance.now(); release(); },
+    stop() { stopped = true; paused = false; status.rate = 0; tell(); release(); },
+  };
 }

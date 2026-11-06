@@ -152,10 +152,12 @@ try {
   await until("the sponsor's float", async () => (await balance(sponsor)) > 3000n);
   const log = openSync(`${root}/sponsor.log`, "a");
   const bin = process.env.LATTICE_SPONSOR || join(dirname(process.env.LATTICE), "lattice-sponsor");
-  const startSponsor = () => spawn(bin, ["--node", `http://127.0.0.1:${rpc}`, "--cookie-file", `${root}/chains/Nexus/.cookie`, "--key", keyFile,
+  const startSponsor = (env = {}) => spawn(bin, ["--node", `http://127.0.0.1:${rpc}`, "--cookie-file", `${root}/chains/Nexus/.cookie`, "--key", keyFile,
     "--share-work", "2^12", "--fee", "1", "--most-pay", String(MOST_PAY), "--payout-at", String(PAYOUT_AT),
-    "--storage-file", `${root}/sponsor-storage.json`, "--port", String(sponsorPort)], { stdio: ["ignore", log, log] });
-  sponsorChild = startSponsor();
+    "--storage-file", `${root}/sponsor-storage.json`, "--port", String(sponsorPort)], { stdio: ["ignore", log, log], env: { ...process.env, ...env } });
+  // The first sponsor dies between writing its first payout down and sending it.
+  sponsorChild = startSponsor({ LATTICE_SPONSOR_TEST_EXIT_BEFORE_SEND: "1" });
+  const firstExit = new Promise((r) => sponsorChild.once("exit", (code) => r(code)));
   await until("the sponsor prices Skylot", async () => (await ask("work", { chain: CHAIN.join("/") }), true), 120);
   assert.equal(await balance(carol), 0n);
   assert.equal(await balance(dave), 0n);
@@ -204,14 +206,18 @@ try {
   }
   const status = await (await fetch(`${sponsorURL}/earnings?chain=${CHAIN.join("/")}&address=${erin.address}`)).json();
   assert.equal(status.payoutAt, String(PAYOUT_AT));
-  // The sponsor crashes the moment its payout is written down; restarted, it
-  // finds the payout on disk and sees it through: Erin is paid exactly once.
+  // The sponsor dies the moment its payout is written down, before sending
+  // it; restarted, it finds the payout on disk and sees it through: Erin is
+  // paid exactly once.
   const book = () => { try { return JSON.parse(readFileSync(`${root}/lattice-sponsor-payouts.json`, "utf8")); } catch { return {}; } };
-  const pending = await until("the payout is written down", async () => book().pending?.find((p) => p.recipients.some((r) => r.address === erin.address)), 120);
-  sponsorChild.kill("SIGKILL");
-  await new Promise((r) => sponsorChild.once("exit", r));
+  assert.equal(await Promise.race([firstExit, new Promise((r) => setTimeout(() => r("timeout"), 120_000))]), 3, "died before sending");
+  const pending = book().pending?.find((p) => p.recipients.some((r) => r.address === erin.address));
+  assert.ok(pending, "the payout is on disk");
   const amount = BigInt(pending.recipients.find((r) => r.address === erin.address).amount);
-  console.log(`✓ the sponsor was killed with a payout of ${amount} to Erin pending at nonce ${pending.nonce}`);
+  const h0 = Number((await api("/api/chain/info"))?.height ?? 0);
+  await until("blocks with no sponsor", async () => Number((await api("/api/chain/info"))?.height ?? 0) >= h0 + 2, 120);
+  assert.equal(await balance(erin), 0n, "never sent: not paid");
+  console.log(`✓ the sponsor died with a payout of ${amount} to Erin written down and unsent, at nonce ${pending.nonce}`);
   sponsorChild = startSponsor();
   await until("the restarted sponsor answers", async () => (await fetch(`${sponsorURL}/terms`)).ok, 60);
   await until("the sponsor pays Erin out", async () => (await balance(erin)) >= amount);
