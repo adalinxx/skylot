@@ -99,9 +99,8 @@
 
 <div class="hud">
   <div class="chip"><small>Coin</small><b id="coin">0</b></div>
-  <div class="chip" id="grindChip"><small>GPU grinding for sponsor</small><span id="grindRate"></span>
+  <div class="chip" id="grindChip"><small id="grindTitle">GPU grinding for sponsor</small><span id="grindRate"></span>
     <div><label class="muted"><input type="checkbox" id="grindToggle" checked> grinding</label></div></div>
-  <div class="chip" id="workChip" hidden><small>Your device's work pays</small><span class="muted" id="workText"></span></div>
   <div class="chip"><small>Day</small><span id="day"></span><div class="bar"><div id="dayBar"></div></div></div>
   <div class="chip"><small>Your skyline rank</small><span id="rank">—</span></div>
   <div class="chip"><small>Speed</small><button class="secondary" id="speedBtn">1×</button></div>
@@ -2678,7 +2677,7 @@ document.getElementById('rotR').onclick = () => turnWithFade(1);
 document.getElementById('compassBtn').onclick = () => { if (!ROT) return; if (ROT === 2) turnView(1); turnWithFade(ROT === 1 ? -1 : 1); };   // back to north-up
 document.getElementById('helpBtn').onclick = () => toggleHelp();
 document.getElementById('helpClose').onclick = () => toggleHelp(false);
-document.getElementById('grindToggle').onchange = e => { state.grinding = e.target.checked; };
+document.getElementById('grindToggle').onchange = e => { state.grinding = e.target.checked; if (CHAIN.on) chainGrind(); };
 
 // ---------------------------------------------------------------- ACTIONS
 function buy(l) {
@@ -2765,7 +2764,7 @@ function secsToAfford(cost) {
   return state.coin >= cost ? 0 : Math.ceil((cost - state.coin) / CFG.grindPerSec);
 }
 const waitText = wait => !CHAIN.on ? `Affordable in about ${wait}s of grinding.` : !CHAIN.wallet ? 'Selfhold couldn’t load, so this page can’t write.'
-  : !CHAIN.me ? 'Connect with Selfhold to play.' : `Work pays up to ${SPONSOR_MOST} coin a write; the rest comes from your coin. Sell a building to earn it.`;
+  : !CHAIN.me ? 'Connect with Selfhold to play.' : `Work in Selfhold's window pays up to ${SPONSOR_MOST} coin a write; keep grinding (or sell a building) for the rest.`;
 let panelKey = '';
 function renderPanelView() {
   const el = $('panel'); const l = state.selected && lot(...state.selected);
@@ -3016,10 +3015,33 @@ $('flyBtn').onclick = () => { state.selSpecial = 'flight'; state.selected = null
 $('fwBtn').onclick = () => buyFireworks();
 $('soundBtn').onclick = () => { sfxInit(); sfxSet(!sfx.on); };
 $('speedBtn').onclick = () => { state.speed = state.speed === 1 ? 3 : 1; $('speedBtn').textContent = state.speed + '×'; };
-if (CHAIN.on) {   // Selfhold's window grinds and shows its own progress; sky ads aren't on chain yet
+if (CHAIN.on) {   // sky ads aren't on chain yet
   document.body.classList.add('chain');
-  $('grindChip').hidden = true; $('skyChip').hidden = true; $('workChip').hidden = false;
-  $('workText').textContent = `Selfhold grinds; the sponsor pays up to ${SPONSOR_MOST} coin a write`;
+  $('skyChip').hidden = true; $('grindTitle').textContent = 'Grinding coin';
+  $('grindChip').title = `This device mines for the fee sponsor, which pays your address in coin as you earn it. Selfhold's window can also pay a write's fee and up to ${SPONSOR_MOST} coin of it with work.`;
+}
+// The real grinder (client/grinder.mjs): runs while connected and switched on.
+function chainGrind() {
+  const want = CHAIN.on && state.grinding && CHAIN.me && CHAIN.bridge && CHAIN.bridge.grind;
+  if (CHAIN.grinder && (!want || CHAIN.grinder.address !== CHAIN.me)) { CHAIN.grinder.stop(); CHAIN.grinder = null; CHAIN.grind = null; }
+  if (want && !CHAIN.grinder) {
+    let paidOut = null;
+    CHAIN.grinder = { address: CHAIN.me, ...CHAIN.bridge.grind(CHAIN.me, (st) => {
+      // Earnings that fell are a payout: read the balance it raised.
+      if (paidOut !== null && st.earned < paidOut) chainSync();
+      paidOut = st.earned; CHAIN.grind = st;
+    }) };
+  }
+}
+function grindText() {
+  if (!CHAIN.on) return state.grinding ? `+${CFG.grindPerSec.toFixed(1)} coin/s` : 'paused';
+  if (!CHAIN.me) return 'connect to start';
+  if (!state.grinding) return 'paused';
+  const g = CHAIN.grind;
+  if (!g) return 'starting…';
+  if (g.error) return g.error;
+  const rate = g.rate >= 1e9 ? `${(g.rate / 1e9).toFixed(1)} GH/s` : g.rate >= 1e6 ? `${(g.rate / 1e6).toFixed(1)} MH/s` : `${Math.round(g.rate / 1e3)} kH/s`;
+  return `${g.rate ? rate : 'warming up'} ${g.device} · ${g.earned} earned${g.payoutAt ? `, paid at ${g.payoutAt}` : ''}`;
 }
 function renderHud() {
   $('coin').textContent = CHAIN.on ? (CHAIN.balance === null ? '—' : String(CHAIN.balance)) : Math.floor(state.coin);
@@ -3028,13 +3050,13 @@ function renderHud() {
   $('fwBtn').textContent = `🎆 Fireworks · ${CFG.fireworksCost}`; $('fwBtn').disabled = state.coin < CFG.fireworksCost;
   $('soundBtn').textContent = sfx.on ? '🔊 On' : '🔇 Off';
   $('clockBtn').textContent = state.realClock ? '🕒 Local time' : '🕒 Game time'; $('tiltBtn').classList.toggle('on', tiltOn); $('tilt').classList.toggle('on', tiltOn);
-  $('grindRate').textContent = state.grinding ? `+${CFG.grindPerSec.toFixed(1)} coin/s` : 'paused';
+  $('grindRate').textContent = grindText();
   $('day').textContent = 'Day ' + state.day + ' · ' + clockStr() + ' ' + SEASON_ICON[SEASON()] + (state.event ? ' ' + EVENTS[state.event].icon : '') + ' ' + (state.weather === 'clear' && E && E.n > 0.6 ? '🌙' : SEASON() === 'winter' && state.weather === 'rain' ? '🌨' : WEATHER[state.weather].icon);
   $('dayBar').style.width = (state.dayT / CFG.dayLengthSec * 100) + '%';
   const owns = [...state.lots.values()].filter(l => l.owner === 'you');
   let hint;
   if (FIRST_RUN && state.time < 25) hint = 'Drag to pan · scroll or pinch to zoom · Q / E to turn the city · press ? for all controls';
-  else if (!owns.length) hint = (CHAIN.on ? '' : 'Your device is grinding for a sponsor. ') + 'Tap lots to compare prices: edge lots are cheapest, main-street lots get the most foot traffic.';
+  else if (!owns.length) hint = (CHAIN.on ? (state.grinding && CHAIN.me ? 'Your device is grinding coin. ' : '') : 'Your device is grinding for a sponsor. ') + 'Tap lots to compare prices: edge lots are cheapest, main-street lots get the most foot traffic.';
   else if (!owns.some(l => l.sign)) hint = 'Select your building and put up a sign. It counts a view each time it shows up legibly on another player’s screen.';
   else if (owns.every(l => l.floors < 3)) hint = 'Raise your building: every floor climbs the skyline board, and taller signs are easier to spot.';
   else hint = CHAIN.on ? 'Climb the skyline: the top bar shows how many floors you need to pass the next building owner.' : 'Climb the skyline: the top bar shows how many floors you need to pass the next rival. They are raising too.';
@@ -3154,6 +3176,7 @@ async function chainSyncNow() {
     if (CHAIN.fee === null) CHAIN.fee = await B.fee().catch(() => null);
     if (CHAIN.me) { CHAIN.balance = await B.balance(CHAIN.me).catch(() => CHAIN.balance); state.coin = CHAIN.balance === null ? 0 : Number(CHAIN.balance); }
     CHAIN.error = null;
+    chainGrind();
   } catch (e) { CHAIN.error = `Can't read the city from ${CHAIN.node}: ${(e && e.message) || e}`; }
 }
 // Reads queue behind each other, so a read after a write sees the write's result.
@@ -3177,7 +3200,7 @@ async function chainDisconnect() {
   if (!CHAIN.bridge) return;
   await CHAIN.bridge.disconnect();
   CHAIN.me = null; CHAIN.youName = ''; CHAIN.balance = null; CHAIN.synced = false; state.coin = 0;
-  await chainSync(); renderPanel(); note('Disconnected from Selfhold. The city is read-only until you connect again.');
+  chainGrind(); await chainSync(); renderPanel(); note('Disconnected from Selfhold. The city is read-only until you connect again.');
 }
 // One act as one wallet write: `label` shows on the lot until the chain has it.
 async function chainAct(kind, l, args, label, cost = 0) {
@@ -3364,6 +3387,11 @@ if (want) {
     // window pays the fee and the burns (up to the sponsor's most-pay) with this
     // device's work through the fee sponsor; Selfhold for Chrome pays from coin.
     const wallet = Sh.selfhold({ use: 'auto', hosts: () => [nodeURL], ...(want.sponsor && { sponsor: () => want.sponsor }) });
+    // Grinding coin: work naming the player's address, paid out by the sponsor. Signs nothing.
+    if (want.sponsor) {
+      const G = await import('./client/grinder.mjs');
+      bridge.grind = (address, onStatus) => G.grind({ sponsor: want.sponsor, chain: chainPath.join('/'), address, onStatus });
+    }
     const moniker = M && M.createMoniker({ sdk });   // Nexus/moniker, at the hosts Nexus lists for it
     const WALLET_MS = 5 * 60_000, CONFIRM_MS = 3 * 60_000;
     // Selfhold's error codes, said plainly (Riposte's wording). `again`: the

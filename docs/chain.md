@@ -83,12 +83,14 @@ for the new owner. Rules say nothing about bots: an account is an account.
 
 ## Coin
 
-- Players earn coin with work, the same on testnet and mainnet: Selfhold's
-  window grinds shares of a fee sponsor's (lattice-sponsor's) block template,
-  and the sponsor pays the write's fee and, up to its `--most-pay`, its burn or
-  payment. A write that costs more takes the rest from the account's coin,
-  earned by selling. `e2e/sponsor.mjs` plays claims, raises and a purchase
-  this way from a 0-coin account.
+- Players earn coin with work, the same on testnet and mainnet. The page
+  grinds shares of a fee sponsor's (lattice-sponsor's) block template naming
+  the player's address (`POST /work {chain, payTo}`, `client/grinder.mjs`),
+  and the sponsor pays each address its earnings in coin once they reach its
+  `--payout-at` (pay per share). Selfhold's window can also pay one write's
+  fee and, up to the sponsor's `--most-pay`, its burn or payment with work.
+  `e2e/sponsor.mjs` plays both from 0-coin accounts; `e2e/page.mjs` earns the
+  player's coin with the page's own grinder.
 - The sponsor pays from its float on the Skylot chain: block rewards it wins
   with players' shares, plus what the operator lends it.
 - Block rewards go to whoever mines the chain.

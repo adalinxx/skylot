@@ -7,6 +7,11 @@
 // building, every burn and payment paid for with work; a write past the
 // sponsor's most-pay is refused by the sponsor, never half-applied.
 //
+// Erin grinds for coin instead (payout work, as the page's grinder does):
+// her shares earn her address, the sponsor pays her out in coin once she
+// reaches its --payout-at, and she spends it in a plain coin write, as
+// Selfhold for Chrome would.
+//
 //   LATTICE=<lattice-node>/.build/release/lattice \
 //   LATTICE_SPONSOR=<lattice-sponsor>/.build/debug/lattice-sponsor node e2e/sponsor.mjs
 import assert from "node:assert/strict";
@@ -26,13 +31,13 @@ const MODULE = here("../chain/skylot_policy.wasm");
 const CHAIN = ["Nexus", "testnet", "skylot-e2e"];
 const [listen, rpc, publicRead, sponsorPort] = [25151, 29500, 29501, 29502];
 const node = `http://127.0.0.1:${publicRead}`, sponsorURL = `http://127.0.0.1:${sponsorPort}`;
-const MOST_PAY = 600n;
+const MOST_PAY = 600n, PAYOUT_AT = 100n;
 
 const root = mkdtempSync(`${tmpdir()}/skylot-sponsor-`);
 const lattice = (...args) => execFileSync(process.env.LATTICE, [...args, "--root", root], { encoding: "utf8" });
 const configure = (change) => { const f = `${root}/lattice.json`, t = JSON.parse(readFileSync(f, "utf8")); change(t); writeFileSync(f, JSON.stringify(t, null, 2)); };
 const account = () => sdk.accountFromPrivateKey(sdk.generatePrivateKey());
-const [carol, dave] = [account(), account()];
+const [carol, dave, erin] = [account(), account(), account()];
 let sponsor, sponsorChild;
 
 async function until(label, condition, seconds = Number(process.env.E2E_SECONDS ?? 300)) {
@@ -148,7 +153,8 @@ try {
   const log = openSync(`${root}/sponsor.log`, "a");
   const bin = process.env.LATTICE_SPONSOR || join(dirname(process.env.LATTICE), "lattice-sponsor");
   sponsorChild = spawn(bin, ["--node", `http://127.0.0.1:${rpc}`, "--cookie-file", `${root}/chains/Nexus/.cookie`, "--key", keyFile,
-    "--share-work", "2^12", "--fee", "1", "--most-pay", String(MOST_PAY), "--port", String(sponsorPort)], { stdio: ["ignore", log, log] });
+    "--share-work", "2^12", "--fee", "1", "--most-pay", String(MOST_PAY), "--payout-at", String(PAYOUT_AT),
+    "--storage-file", `${root}/sponsor-storage.json`, "--port", String(sponsorPort)], { stdio: ["ignore", log, log] });
   await until("the sponsor prices Skylot", async () => (await ask("work", { chain: CHAIN.join("/") }), true), 120);
   assert.equal(await balance(carol), 0n);
   assert.equal(await balance(dave), 0n);
@@ -178,6 +184,43 @@ try {
   const big = { ...S.raise(await lotAt(x, y), Date.now()), payments: [{ to: S.BURN, amount: MOST_PAY + 1n }] };
   await assert.rejects(() => send(carol, big), /at most/);
   console.log(`✓ refused by the sponsor: a burn of ${MOST_PAY + 1n}, past its most-pay`);
+
+  // ---- grinding for coin: payout work names Erin's address, no token or key needed
+  assert.equal(await balance(erin), 0n);
+  const t0 = Date.now();
+  let earned = 0n, payoutShares = 0;
+  while (earned < PAYOUT_AT) {
+    const work = await ask("work", { chain: CHAIN.join("/"), payTo: erin.address });
+    assert.equal(work.sharesForFee, "0", "payout work buys no fee");
+    for (const nonce of shares(work)) {
+      try { earned = BigInt((await ask("shares", { assignment: work.assignment, nonce: String(nonce) })).credit); payoutShares++; }
+      catch (error) { if (error.status === 400 || error.status === 410 || error.status === 503) break; throw error; }
+      if (earned >= PAYOUT_AT) break;
+    }
+  }
+  const status = await (await fetch(`${sponsorURL}/earnings?chain=${CHAIN.join("/")}&address=${erin.address}`)).json();
+  assert.equal(status.payoutAt, String(PAYOUT_AT));
+  await until("the sponsor pays Erin out", async () => (await balance(erin)) >= PAYOUT_AT);
+  const paid = await balance(erin);
+  console.log(`✓ Erin ground ${payoutShares} shares for coin and was paid ${paid} (${Math.round((Date.now() - t0) / 1000)}s)`);
+  const left = BigInt((await (await fetch(`${sponsorURL}/earnings?chain=${CHAIN.join("/")}&address=${erin.address}`)).json()).earned);
+  assert.ok(left < PAYOUT_AT, "what was paid left her earnings");
+  assert.equal((await (await fetch(`${sponsorURL}/terms`)).json()).payoutAt, String(PAYOUT_AT));
+
+  // She spends it with no sponsor at all: a plain coin write, fee included.
+  const [ex, ey] = [5, 7], ePrice = S.lotPrice(ex, ey);
+  assert.ok(paid >= ePrice + 1n, `a payout of ${paid} covers lot (${ex},${ey}) at ${ePrice}`);
+  const request = S.writeRequest(CHAIN, S.claim(ex, ey, erin.address, 200n, "stone", Date.now()), 1n);
+  const body = S.transaction({ owner: erin.address, actions: request.actions,
+    payments: request.payments.map(({ to, amount }) => ({ to, amount: BigInt(amount) })), fee: 1n,
+    nonce: BigInt((await accountState(erin))?.nonce ?? 0), chainPath: request.chainPath });
+  const signed = sdk.signTransactionBody(body, erin.privateKey);
+  const r = await fetch(`${node}/transactions`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(sdk.transactionPayload({ [signed.publicKey]: signed.signature }, body)) });
+  assert.ok(r.ok, await r.text());
+  await until("Erin's claim lands", async () => (await lotAt(ex, ey))?.owner === erin.address);
+  assert.equal(await balance(erin), paid - ePrice - 1n);
+  console.log(`✓ Erin claims (${ex},${ey}) with her ground coin, burning ${ePrice}`);
 
   console.log("\nSPONSOR E2E PASSED");
 } finally {

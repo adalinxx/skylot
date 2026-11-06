@@ -2,17 +2,20 @@
 // Nexus/testnet and a Skylot chain from chain/spec.json; the repo is served
 // over http; headless Chrome opens the page in chain mode with a stand-in for
 // Selfhold for Chrome that signs real transactions with a throwaway key.
-// The test then plays through the page's own code: connect, buy an empty lot,
-// raise it (the listed price rises too), and upload a brand with a picture and
-// a link, checking each against the chain. Screenshots go to $SHOTS.
+// A fee sponsor (lattice-sponsor --payout-at) runs beside the node. The
+// player starts with no coin: the test plays through the page's own code,
+// connect, let the page's grinder earn coin until the sponsor pays it out,
+// then buy an empty lot, raise it (the listed price rises too), and upload a
+// brand with a picture and a link, checking each against the chain.
+// Screenshots go to $SHOTS.
 //
-//   LATTICE=<lattice-node>/.build/debug/lattice SHOTS=<dir> node e2e/page.mjs
+//   LATTICE=<lattice-node>/.build/debug/lattice LATTICE_SPONSOR=<lattice-sponsor> SHOTS=<dir> node e2e/page.mjs
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { extname, join, normalize } from "node:path";
+import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as sdk from "../app/vendor/lattice-sdk.js";
 import * as S from "../client/skylot.mjs";
@@ -20,7 +23,8 @@ import * as S from "../client/skylot.mjs";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CHAIN = ["Nexus", "testnet", "skylot-page"];
 const SHOTS = process.env.SHOTS ?? tmpdir();
-const ports = { listen: 25141, rpc: 29490, publicRead: 29491, web: 28765, cdp: 9533 };
+const ports = { listen: 25141, rpc: 29490, publicRead: 29491, sponsor: 29492, web: 28765, cdp: 9533 };
+const sponsorURL = `http://127.0.0.1:${ports.sponsor}`, PAYOUT_AT = 200n;
 const nodeURL = `http://127.0.0.1:${ports.publicRead}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -29,6 +33,7 @@ const lattice = (...args) => execFileSync(process.env.LATTICE, [...args, "--root
 const configure = (change) => { const f = `${root}/lattice.json`, t = JSON.parse(readFileSync(f, "utf8")); change(t); writeFileSync(f, JSON.stringify(t, null, 2)); };
 const account = () => sdk.accountFromPrivateKey(sdk.generatePrivateKey());
 const [miner, faucet, player] = [account(), account(), account()];
+let sponsorChild;
 
 async function until(label, condition, seconds = 300) {
   const deadline = Date.now() + seconds * 1000;
@@ -102,28 +107,41 @@ try {
   lattice("child", "create", "Nexus/testnet");
   writeFileSync(`${root}/skylot.json`, readFileSync(join(ROOT, "chain/spec.json")));
   lattice("child", "create", CHAIN.join("/"), "--spec", `${root}/skylot.json`, "--policy-module", join(ROOT, "chain/skylot_policy.wasm"), "--premine-to", faucet.address);
-  configure((t) => { t.mine.recipients = { Nexus: miner.address, "Nexus/testnet": miner.address, [CHAIN.join("/")]: miner.address }; });
+  const keyFile = `${root}/sponsor-key.json`;
+  execFileSync(process.env.LATTICE, ["key", "generate", "--out", keyFile]);
+  const sponsor = JSON.parse(readFileSync(keyFile, "utf8"));
+  // The chain's rewards are the sponsor's float, as on testnet.
+  configure((t) => { t.mine.recipients = { Nexus: miner.address, "Nexus/testnet": miner.address, [CHAIN.join("/")]: sponsor.address }; });
   lattice("up"); lattice("mine", "start");
   await until("genesis", async () => (await balance(faucet.address)) > 0n);
-  // Fund the player from the faucet.
-  { const info = await api("/api/chain/info"), nonce = BigInt((await api(`/api/state/account/${faucet.address}`))?.nonce ?? 0);
-    const body = S.transaction({ owner: faucet.address, actions: [], payments: [{ to: player.address, amount: 5000n }], fee: BigInt(info.minRelayFee ?? 1), nonce, chainPath: CHAIN });
-    const { publicKey, signature } = sdk.signTransactionBody(body, faucet.privateKey);
-    const r = await fetch(`${nodeURL}/transactions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sdk.transactionPayload({ [publicKey]: signature }, body)) });
-    assert.ok(r.ok, await r.text());
-    await until("player funded", async () => (await balance(player.address)) === 5000n); }
-  console.log("✓ chain up; player funded with 5000");
+  await until("the sponsor's float", async () => (await balance(sponsor.address)) > 3000n);
+  const log = openSync(`${root}/sponsor.log`, "a");
+  sponsorChild = spawn(process.env.LATTICE_SPONSOR || join(dirname(process.env.LATTICE), "lattice-sponsor"), ["--node", `http://127.0.0.1:${ports.rpc}`,
+    "--cookie-file", `${root}/chains/Nexus/.cookie`, "--key", keyFile, "--share-work", "2^16", "--fee", "1",
+    "--payout-at", String(PAYOUT_AT), "--storage-file", `${root}/sponsor-storage.json`, "--port", String(ports.sponsor)], { stdio: ["ignore", log, log] });
+  await until("the sponsor's terms", async () => (await (await fetch(`${sponsorURL}/terms`)).json()).payoutAt === String(PAYOUT_AT), 60);
+  assert.equal(await balance(player.address), 0n);
+  console.log("✓ chain and sponsor up; the player holds 0 coin");
 
   page = await chrome();
   await page.send("Page.addScriptToEvaluateOnNewDocument", { source: STAND_IN });
-  await page.send("Page.navigate", { url: `http://127.0.0.1:${ports.web}/index.html?node=${encodeURIComponent(nodeURL)}&chain=${CHAIN.join("/")}` });
+  await page.send("Page.navigate", { url: `http://127.0.0.1:${ports.web}/index.html?node=${encodeURIComponent(nodeURL)}&chain=${CHAIN.join("/")}&sponsor=${encodeURIComponent(sponsorURL)}` });
   await sleep(4000);
   await page.run("SkylotChain.ready");
   // Connect through the page's own button.
   const clicked = await page.run(`(() => { const b = [...document.querySelectorAll('button')].find(b => /Connect with Selfhold/.test(b.textContent)); if (b) b.click(); return !!b; })()`);
   assert.ok(clicked, "no Connect with Selfhold button");
-  await until("page shows coin", async () => /5,?000/.test(await page.run("document.body.innerText")), 30);
-  console.log("✓ connected through Selfhold's client; HUD shows the chain balance");
+  console.log("✓ connected through Selfhold's client");
+  // Connected, the page grinds for the player's address on its own (headless: on processor workers).
+  await until("the grinder runs", () => page.run("!!(CHAIN.grind && CHAIN.grind.rate > 0)"), 60);
+  console.log(`✓ the page grinds: ${await page.run("document.getElementById('grindRate').textContent")}`);
+  await until("the sponsor pays the player out", async () => (await balance(player.address)) >= PAYOUT_AT, 180);
+  const earned = await balance(player.address);
+  await until("the HUD shows the paid coin", async () => (await page.run("document.getElementById('coin').textContent")) === String(earned), 60);
+  console.log(`✓ the sponsor paid the player ${earned} for the page's work; the HUD shows it`);
+  // Pause grinding through the chip's switch, so the balances below are the writes' alone.
+  await page.run("(() => { const t = document.getElementById('grindToggle'); t.checked = false; t.onchange({ target: t }); })()");
+  assert.equal(await page.run("CHAIN.grinder"), null);
 
   const [x, y] = [7, 7];
   await page.run(`(() => { state.selected = [${x}, ${y}]; buy(lot(${x}, ${y})); })()`);
@@ -157,7 +175,7 @@ try {
   assert.equal(page.errors.length, 0, `uncaught errors: ${page.errors.join(" | ")}`);
   console.log("✓ panel shows the link's domain; no uncaught page errors\n\nPAGE E2E PASSED");
 } finally {
-  page?.close(); web.close();
+  page?.close(); web.close(); sponsorChild?.kill();
   try { lattice("mine", "stop"); } catch {} try { lattice("down"); } catch {}
 }
 
