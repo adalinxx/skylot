@@ -5,8 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Skylot comments</title>
 <!--
-  One building's Riposte thread, framed by index.html's "Talk about this
-  building" card: ?page=skylot/<chain path>/lot/<x>,<y>. riposte.js (vendored
+  One Riposte thread, framed by index.html's comments card:
+  ?page=skylot/<chain path>/lot/<x>,<y> (a building), skylot/<chain path>
+  (a city) or skylot/town (offline play). riposte.js (vendored
   in vendor/riposte, see PROVENANCE.md) mounts #riposte once per document, so
   each building gets a fresh frame. Riposte's chain, hosts and fee sponsor are
   its own defaults; comments are signed in Selfhold's window and paid with this
@@ -29,7 +30,7 @@
   // The thread's name, from the parent page. Anything else mounts nothing.
   (() => {
     const page = new URLSearchParams(location.search).get('page') || '', el = document.getElementById('riposte');
-    if (/^skylot\/[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)*\/lot\/[0-9]+,[0-9]+$/.test(page)) el.dataset.page = page;
+    if (/^skylot\/[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)*(\/lot\/[0-9]+,[0-9]+)?$/.test(page)) el.dataset.page = page;
     else el.removeAttribute('id');
   })();
 </script>

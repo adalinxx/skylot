@@ -27,7 +27,7 @@ http://localhost:8000/?node=http://127.0.0.1:29391&chain=Nexus/testnet/skylot-e2
 - `?offline` forces the offline game. Without a node and chain, the page is the offline game, and it still opens from `file://`.
 - **Wallet:** **Connect with Selfhold** uses Selfhold for Chrome where it's installed, else Selfhold's passkey window (wallet.selfhold.app). Coin is your account's balance on the chain; for now it comes from the operator's faucet. Until you connect, the city is read-only.
 - **Handles:** owners show as their verified @handle from [Moniker](https://app.moniker.bio/), else their brand's name (cleaned so it can't pose as a handle), else their short account ID.
-- **Comments:** select a building to talk about it. Each building has its own [Riposte](https://github.com/adalinxx/riposte) thread; comments are signed in Selfhold's window and need no coin. No moderators are set yet.
+- **Comments:** select a building to talk about it. Each building has its own [Riposte](https://github.com/adalinxx/riposte) thread, and the city has one when nothing is selected; comments are signed in Selfhold's window and need no coin. Riposte runs on its own chain, so offline play has comments too: one thread, **Talk about Skylot**, shared by everyone. No moderators are set yet.
 - Rivals, sign rentals, banner planes, fireworks, the blimp, taxi ads and the plaza auction are offline-only until they're on chain.
 
 ## Controls

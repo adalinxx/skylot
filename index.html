@@ -86,8 +86,8 @@
   input[type=file] { width: 100%; font-size: 12px; }
   .mkt .nm { display: inline-block; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
   #talk { max-height: 46vh; overflow: auto; }
-  body.chain #side { overflow-y: auto; }                 /* chain mode adds the comments card: let the column scroll */
-  body.chain #side > .card { flex-shrink: 0; }
+  body.talk #side { overflow-y: auto; }                  /* the comments card: let the column scroll */
+  body.talk #side > .card { flex-shrink: 0; }
   #talk[hidden] { display: none; }
   #talkBox iframe { display: block; width: 100%; height: 160px; border: 0; margin-top: 8px; background: transparent; }
 </style>
@@ -114,7 +114,7 @@
 
 <div id="side">
   <div class="card" id="panel"></div>
-  <div class="card" id="talk" hidden><h2>Talk about this building</h2>
+  <div class="card" id="talk" hidden><h2 id="talkTitle">Talk about this building</h2>
     <div class="muted">Comments by Riposte, signed with Selfhold's passkey window. Commenting needs no coin.</div>
     <div id="talkBox"></div></div>
   <div class="card" id="goals"></div>
@@ -2904,19 +2904,28 @@ function renderPanel() {
   const db = $('disconnectBtn'); if (db) db.onclick = chainDisconnect;
   renderTalk();
 }
-// "Talk about this building": a Riposte thread per building, in its own card
-// that renderPanel never rebuilds. riposte.js mounts once per document, so
-// each thread lives in a same-origin frame (app/comments.html), made anew
-// only when the selected building changes; leaving it ends its timers.
+// Comments by Riposte, in their own card that renderPanel never rebuilds.
+// Riposte runs on its own chain, so comments work in both modes:
+//  - chain mode: a thread per building (skylot/<chain path>/lot/<x>,<y>), and
+//    the city's thread (skylot/<chain path>) when no building is selected;
+//  - offline: one thread for everyone playing (skylot/town), since each
+//    offline city is the player's own and its buildings are no one else's.
+// riposte.js mounts once per document, so each thread lives in a same-origin
+// frame (app/comments.html), made anew only when the thread changes. Needs
+// http(s): modules don't load from file://.
 let talkKey = '';
 function renderTalk() {
+  const web = /^https?:$/.test(location.protocol);
   const l = CHAIN.on && CHAIN.bridge && state.selected && lot(...state.selected);
-  const key = l && l.floors > 0 ? `skylot/${CHAIN.path}/lot/${l.x},${l.y}` : '';
+  const building = l && l.floors > 0;
+  const key = !web ? '' : building ? `skylot/${CHAIN.path}/lot/${l.x},${l.y}` : CHAIN.on ? `skylot/${CHAIN.path}` : 'skylot/town';
   if (key === talkKey) return;
   talkKey = key; $('talk').hidden = !key; $('talkBox').textContent = '';
+  document.body.classList.toggle('talk', !!key);
   if (!key) return;
+  $('talkTitle').textContent = building ? 'Talk about this building' : 'Talk about Skylot';
   const f = document.createElement('iframe');
-  f.title = `Comments on the building at (${l.x},${l.y})`;
+  f.title = building ? `Comments on the building at (${l.x},${l.y})` : 'Comments on Skylot';
   f.src = 'app/comments.html?page=' + encodeURIComponent(key);
   f.onload = () => { try { const d = f.contentDocument, fit = () => { f.style.height = Math.max(120, d.documentElement.scrollHeight) + 'px'; };
     new ResizeObserver(fit).observe(d.body); fit(); } catch (_) { /* not same-origin: keeps its fixed height */ } };
