@@ -10,7 +10,7 @@ climb the skyline, while rivals race you, makes a player want to play one more d
 
 ## How to run
 
-Open `index.html` in a browser. No build step, no server, no chain.
+Open `index.html` in a browser. No build step, no server, no chain. (To play on a chain, see **Chain mode** below.)
 
 - Tap a lot to see its price; buy it once grinding has earned enough.
 - Select your building to put up a sign, change style, or raise it (button or `R`).
@@ -255,6 +255,21 @@ Canvas 2D with caching (all in the RENDER section's header comment):
   - A half-resolution layer for large additive glows. It was 16% slower, because glows span most of the screen.
   - Drawing the ground from an ImageBitmap. No gain.
 - **Production path:** if the world grows to thousands of buildings or multiple districts on screen, move rendering to WebGL (for example PixiJS) with a texture atlas. The cache-by-key design maps directly onto GPU textures.
+
+## Chain mode
+
+`index.html?node=<url>&chain=<path>` (or `DEFAULT_NODE` / `DEFAULT_CHAIN` near the top of the script, empty until the testnet launch) reads the city from a Lattice chain; `?offline` forces the offline game. The records and rules are in [`chain.md`](chain.md).
+
+- **Serving:** chain mode imports `client/skylot.mjs`, `client/state.mjs` and `app/vendor/` (the Lattice SDK, Selfhold, Moniker; Riposte in the comments frame), which browsers won't load from `file://`. Run `python3 -m http.server 8000` from the repo root and open `http://localhost:8000/?node=…&chain=…`. From `file://` the panel says so. Offline mode never needs the modules (over http it loads `client/skylot.mjs` only for `safeLink`) and loads none of the vendored apps.
+- **Bridge:** a `<script type="module">` at the end of `index.html` exposes `window.SkylotChain` (`city`, `balance`, `fee`, `wallet`, `walletKind`, `address`, `connect`, `disconnect`, `perform`, `handles`, `label`, `handleURL`). The classic script maps `city()` into `state.lots` every 5 s and after each write: your wallet's address becomes `'you'`; other owners get a `RIVAL[address]` entry from their brand (or a short address, a colour and a template sign), so every view of an owner works unchanged.
+- **Writes:** buy an empty lot → `claim` (listed at `CFG.askDefault` × its burn), raise (button or `R`) → `raise`, style → `restyle`, Set price → `reprice`, Buy building → `buy` (relisted at `CFG.askDefault` × the price paid), Update sign → `setBrand`. Each goes to Selfhold's `writeRecords(request, { account })`. The request is `client/skylot.mjs` `writeRequest` without `fee` (Selfhold sets it: at least the host's `minRelayFee`) and with `coinOnly: true`, so burns and payments come from the account's coins and no fee sponsor is asked. Selfhold's error codes (PopupBlocked, Closed, Declined, AccountChanged, NotConnected, NeedsCoins, NoWallet…) are logged as plain sentences. The lot shows its pending label until every key the write named holds its new value; a refusal or a 3-minute timeout logs `explain()`'s sentence. A wallet that never answers is reported as "may still land" and never resubmitted.
+- **Wallet:** Selfhold's client with `use: "auto"`: Selfhold for Chrome where installed, else Selfhold's passkey window; `hosts` is the chain node; no sponsor. The panel's **Connect with Selfhold** (only from a click) and **Disconnect**; the connected account shows as its Moniker label.
+- **Handles:** one Moniker read (`handlesOf`) for every owner when the owners change, or once a minute, from the hosts Nexus lists for Nexus/moniker. Names come from Moniker's `label`: the verified @handle, else the brand's name as `displayName` cleans it (no `@` or look-alikes, bidi or zero-width characters), else the short ID. They show in the Owner row, marketplace rows, the skyline board, the hover tooltip, recent sales and the link row. A verified owner's Moniker page (`https://app.moniker.bio/#/@<handle>`) opens only through the panel's domain-and-**Open link** row. If Moniker can't be read, names fall back without a word.
+- **Comments:** selecting a building shows **Talk about this building**, its own card after the panel (renderPanel never rebuilds it). `riposte.js` mounts once per document, so each thread is a same-origin frame, `app/comments.html?page=skylot/<chain path>/lot/<x>,<y>`, made anew only when the selected building changes. Riposte keeps its own chain, hosts and fee sponsor; comments are signed in Selfhold's window and paid with the device's work. `data-moderators` is empty for now: the operator will choose a moderator account later.
+- **Vendored (app/vendor/):** `selfhold.mjs` + `selfhold.LICENSE` (selfhold-wallet 4d4c0a8, copied from Riposte); `moniker/` (moniker-sdk v0.5.0 at b06b714, the reader Riposte vendors, with its LICENSE); `riposte/` (adalinxx/riposte at b0a934e, see `riposte/PROVENANCE.md`); `lattice-sdk.js`.
+- **Testing without a wallet:** define a stand-in `window.lattice` (`isLatticeWallet: true`, `connect()`, `address()`, `disconnect()`, `writeRecords(request)`) before the page loads, which Selfhold's client takes as Selfhold for Chrome, for example with Chrome DevTools Protocol's `Page.addScriptToEvaluateOnNewDocument`. `window.__curio.chain` and `window.__curio.chainSync()` expose the page's chain state.
+- **Off in chain mode:** the AI economy (`rivalsAct`, `rivalsTrade`, `repriceRivals`, rent offers), seeded rival buildings, sign rentals, banner flights, fireworks, blimp and taxi ads and the plaza auction, and the goals that need them. Ambient planes, the blimp and fireworks for a new #1 still fly.
+- **Signs:** the sign editor takes an uploaded PNG, JPEG or WebP (decoded, scaled to at most 96 px, re-encoded as WebP or PNG under 24,000 bytes; SVG is refused) or pixel art, plus an optional https link. Signs draw a picture from a decoded `ImageBitmap`, never from markup. Selecting a building whose sign has a link shows its domain and an **Open link** button. Both work offline too, locally.
 
 ## Status
 

@@ -1,0 +1,6 @@
+# The module's bytes, and so its CID in chain/spec.json, depend on the
+# compiler: rebuild with this toolchain to reproduce the committed module.
+[toolchain]
+channel = "1.96.0"
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skylot comments</title>
+<!--
+  One building's Riposte thread, framed by index.html's "Talk about this
+  building" card: ?page=skylot/<chain path>/lot/<x>,<y>. riposte.js (vendored
+  in vendor/riposte, see PROVENANCE.md) mounts #riposte once per document, so
+  each building gets a fresh frame. Riposte's chain, hosts and fee sponsor are
+  its own defaults; comments are signed in Selfhold's window and paid with this
+  device's work, so they need no coin.
+-->
+<style>
+  :root { --riposte-accent: #f2b45a; --riposte-on-accent: #1b1f2a; }
+  html, body { margin: 0; background: transparent; color: #f1ece2;
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  a { color: #f2b45a; }
+  #riposte { font-size: 13px; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  }
+</style>
+</head>
+<body>
+<div id="riposte" data-moderators=""></div>
+<script>
+  // The thread's name, from the parent page. Anything else mounts nothing.
+  (() => {
+    const page = new URLSearchParams(location.search).get('page') || '', el = document.getElementById('riposte');
+    if (/^skylot\/[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)*\/lot\/[0-9]+,[0-9]+$/.test(page)) el.dataset.page = page;
+    else el.removeAttribute('id');
+  })();
+</script>
+<script type="module" src="vendor/riposte/riposte.js"></script>
+</body>
+</html>

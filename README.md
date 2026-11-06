@@ -13,6 +13,23 @@ Download or clone the repo, then open `index.html` in a browser. There's no buil
 - `index.html?demo` starts with a built-up lot.
 - Press `?` in the game for every control.
 
+## Chain mode
+
+With a Lattice node and a Skylot chain, the city's land, buildings and brands come from the chain, and your acts become writes signed through [Selfhold](https://selfhold.app/) (the page holds no key). The rules are in [docs/chain.md](docs/chain.md). Walkers, traffic, weather and the sky stay simulated in the browser. Chain mode loads ES modules, so serve the repo over http:
+
+```sh
+python3 -m http.server 8000          # from the repo root
+# then open
+http://localhost:8000/?node=http://127.0.0.1:29391&chain=Nexus/testnet/skylot-e2e
+```
+
+- `?node=<url>&chain=<path>` turns chain mode on. `DEFAULT_NODE` / `DEFAULT_CHAIN` near the top of the script do the same once the testnet chain is launched (empty for now).
+- `?offline` forces the offline game. Without a node and chain, the page is the offline game, and it still opens from `file://`.
+- **Wallet:** **Connect with Selfhold** uses Selfhold for Chrome where it's installed, else Selfhold's passkey window (wallet.selfhold.app). Coin is your account's balance on the chain; for now it comes from the operator's faucet. Until you connect, the city is read-only.
+- **Handles:** owners show as their verified @handle from [Moniker](https://app.moniker.bio/), else their brand's name (cleaned so it can't pose as a handle), else their short account ID.
+- **Comments:** select a building to talk about it. Each building has its own [Riposte](https://github.com/adalinxx/riposte) thread; comments are signed in Selfhold's window and need no coin. No moderators are set yet.
+- Rivals, sign rentals, banner planes, fireworks, the blimp, taxi ads and the plaza auction are offline-only until they're on chain.
+
 ## Controls
 
 | | Mouse & trackpad | Keyboard | Touch |

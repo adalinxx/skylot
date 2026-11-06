@@ -79,6 +79,17 @@
   .hint span { background: rgba(38,43,56,.85); padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); }
   .bar { height: 6px; background: var(--panel-2); border-radius: 4px; overflow: hidden; margin-top: 4px; }
   .bar > div { height: 100%; background: var(--accent-2); }
+  .chainbar { margin: 0 0 8px; padding: 6px 8px; border-radius: 8px; background: var(--panel-2); font-size: 12px; }
+  .chainbar .bad { color: var(--danger); }
+  #imgPrev { display: block; max-width: 96px; max-height: 48px; margin: 4px 0; border-radius: 4px; border: 1px solid var(--line); }
+  #imgPrev[hidden] { display: none; }
+  input[type=file] { width: 100%; font-size: 12px; }
+  .mkt .nm { display: inline-block; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+  #talk { max-height: 46vh; overflow: auto; }
+  body.chain #side { overflow-y: auto; }                 /* chain mode adds the comments card: let the column scroll */
+  body.chain #side > .card { flex-shrink: 0; }
+  #talk[hidden] { display: none; }
+  #talkBox iframe { display: block; width: 100%; height: 160px; border: 0; margin-top: 8px; background: transparent; }
 </style>
 </head>
 <body>
@@ -88,19 +99,24 @@
 
 <div class="hud">
   <div class="chip"><small>Coin</small><b id="coin">0</b></div>
-  <div class="chip"><small>GPU grinding for sponsor</small><span id="grindRate"></span>
+  <div class="chip" id="grindChip"><small>GPU grinding for sponsor</small><span id="grindRate"></span>
     <div><label class="muted"><input type="checkbox" id="grindToggle" checked> grinding</label></div></div>
+  <div class="chip" id="faucetChip" hidden><small>Get testnet coin</small><span class="muted" id="faucetText">The operator's faucet sends coin to your wallet address.</span>
+    <div><button class="secondary" id="copyAddr" hidden>Copy my address</button></div></div>
   <div class="chip"><small>Day</small><span id="day"></span><div class="bar"><div id="dayBar"></div></div></div>
   <div class="chip"><small>Your skyline rank</small><span id="rank">—</span></div>
   <div class="chip"><small>Speed</small><button class="secondary" id="speedBtn">1×</button></div>
   <div class="chip"><small>Sound</small><button class="secondary" id="soundBtn">🔊</button></div>
   <div class="chip"><small>View</small><button class="secondary" id="clockBtn">🕒 Game time</button> <button class="secondary" id="tiltBtn">🔍 Tilt-shift</button> <span class="turn"><button class="secondary" id="rotL" title="Turn the city left (Q)" aria-label="Turn left">⟲</button><button class="secondary" id="compassBtn" aria-label="Compass"><span id="compass">▲</span></button><button class="secondary" id="rotR" title="Turn the city right (E)" aria-label="Turn right">⟳</button></span> <button class="secondary" id="helpBtn" title="Controls (?)" aria-label="Controls">?</button></div>
   <div class="chip"><small>Marketplace</small><button id="mktBtn">🏷 Buy &amp; sell</button></div>
-  <div class="chip"><small>Sky ads &amp; spectacle</small><button id="flyBtn">✈ Fly your banner</button> <button id="fwBtn">🎆 Fireworks</button></div>
+  <div class="chip" id="skyChip"><small>Sky ads &amp; spectacle</small><button id="flyBtn">✈ Fly your banner</button> <button id="fwBtn">🎆 Fireworks</button></div>
 </div>
 
 <div id="side">
   <div class="card" id="panel"></div>
+  <div class="card" id="talk" hidden><h2>Talk about this building</h2>
+    <div class="muted">Comments by Riposte, signed with Selfhold's passkey window. Commenting needs no coin.</div>
+    <div id="talkBox"></div></div>
   <div class="card" id="goals"></div>
   <div class="card" id="board"><h2>Skyline: tallest building</h2><ol id="boardList"></ol></div>
   <div class="card" id="log"></div>
@@ -160,6 +176,24 @@ const CFG = {
   daysPerSeason: 3,
 };
 
+// ---------------------------------------------------------------- CHAIN MODE
+// With ?node=<url>&chain=<path> (or the defaults below) the city's land,
+// buildings and brands come from a Lattice chain (docs/chain.md), and buying,
+// raising, restyling, repricing and brands are wallet writes. Walkers, traffic,
+// weather and the sky stay simulated here. ?offline forces the offline game.
+// The <script type="module"> at the end loads client/skylot.mjs and exposes it
+// as window.SkylotChain; everything about records and rules lives there.
+const DEFAULT_NODE = '', DEFAULT_CHAIN = '';
+const CHAIN = (() => {
+  const q = new URLSearchParams(location.search), node = q.get('node') || DEFAULT_NODE, path = q.get('chain') || DEFAULT_CHAIN;
+  return { on: !q.has('offline') && !!node && !!path, node, path, bridge: null, lib: null, wallet: undefined, me: null,
+    balance: null, fee: null, synced: false, error: null, hasBrand: false, brandKey: '', handles: new Map(), youName: '' };
+})();
+// Tells the module what to load: the chain client in chain mode; offline over
+// http(s) only the record helpers (for safeLink); on file:// nothing at all.
+if (CHAIN.on) window.SKYLOT_BRIDGE = { node: CHAIN.node, chain: CHAIN.path };
+else if (/^https?:$/.test(location.protocol)) window.SKYLOT_BRIDGE = {};
+
 // ---------------------------------------------------------------- WORLD
 const N = CFG.gridSize, MID = (N - 1) / 2;
 const isStreet = (x, y) => x % CFG.streetEvery === 0 || y % CFG.streetEvery === 0;
@@ -194,8 +228,8 @@ const state = {
   fx: [], speed: 1, mouse: null, lastRank: null,
   stats: { bestRank: 99, rented: false, taxi: false, flew: false, fw: false, plaza: false, blimp: false },
   weather: 'clear', flash: 0, crowd: null, fw: [], fwQueue: [], selSpecial: null, leader: null,
-  plaza: { holder: 'atlas', top: null, viewsToday: 0, lastView: -99, rect: null },
-  blimp: { brand: 'lumen', days: 2, a: 0.6, viewsToday: 0, lastView: -99, rect: null },
+  plaza: { holder: CHAIN.on ? null : 'atlas', top: null, viewsToday: 0, lastView: -99, rect: null },
+  blimp: { brand: CHAIN.on ? null : 'lumen', days: 2, a: 0.6, viewsToday: 0, lastView: -99, rect: null },
   sales: [], taxis: [], cars: [], planes: [], planeT: 15, flights: [], selTaxi: null, trafficT: 0, realClock: false,
 };
 
@@ -210,9 +244,11 @@ function seed(id, x, y, floors, style) {
   const l = lot(x, y); const r = RIVAL[id];
   Object.assign(l, { owner: id, floors, df: floors, style, sign: { text: r.name, icon: r.icon, color: r.color } });
 }
-seed('atlas', 9, 9, 11, 'glass'); seed('lumen', 7, 7, 7, 'stone'); seed('neon', 9, 6, 5, 'brick');
-seed('glass', 7, 10, 4, 'glass'); seed('brick', 5, 9, 3, 'brick'); seed('pip', 10, 5, 2, 'stone');
-seed('lumen', 11, 9, 3, 'stone'); seed('neon', 6, 11, 2, 'brick');
+if (!CHAIN.on) {   // chain mode starts as whatever the chain holds
+  seed('atlas', 9, 9, 11, 'glass'); seed('lumen', 7, 7, 7, 'stone'); seed('neon', 9, 6, 5, 'brick');
+  seed('glass', 7, 10, 4, 'glass'); seed('brick', 5, 9, 3, 'brick'); seed('pip', 10, 5, 2, 'stone');
+  seed('lumen', 11, 9, 3, 'stone'); seed('neon', 6, 11, 2, 'brick');
+}
 
 // ---------------------------------------------------------------- RULES
 function facesMain(l) {
@@ -227,12 +263,15 @@ function neighborFloors(l) {
   return s;
 }
 function lotPrice(l) {
+  if (CHAIN.lib) return Number(CHAIN.lib.lotPrice(l.x, l.y));   // on chain: rules.json, by location only
   const d = Math.hypot(l.x - MID, l.y - MID) / Math.hypot(MID, MID);
   const center = 1 + CFG.centerWeight * (1 - d) ** 1.5;
   const main = facesMain(l) ? CFG.mainStreetBonus : 1;
   return Math.round(CFG.lotBasePrice * center * main * (1 + neighborFloors(l) * CFG.neighborFloorBonus));
 }
-const floorCost = l => Math.round(CFG.floorBaseCost * CFG.floorGrowth ** (l.floors - 1));
+// Cost of the floor above `f` floors. On chain: client/skylot.mjs (doubling, top floor 30).
+const floorCostAt = f => { if (!CHAIN.lib) return Math.round(CFG.floorBaseCost * CFG.floorGrowth ** (f - 1)); try { return Number(CHAIN.lib.floorCost(f)); } catch (_) { return Infinity; } };
+const floorCost = l => floorCostAt(l.floors);
 const brandOf = l => l.rentedBy ? l.rentedBy : l.owner;
 const signOf = l => {
   if (!l.sign || l.floors < 1) return null;
@@ -241,7 +280,9 @@ const signOf = l => {
   return l.sign;
 };
 const rentAsk = l => Math.max(3, Math.round(CFG.offerPerFloor * l.floors * (facesMain(l) ? CFG.mainStreetBonus : 1)));
-const brandName = id => id === 'you' ? state.you.brand.text + ' (you)' : RIVAL[id].name;
+const brandName = id => id === 'you' ? (CHAIN.on && CHAIN.youName ? CHAIN.youName : state.you.brand.text) + ' (you)' : RIVAL[id].name;
+// Brand names and addresses come from anyone on chain: escape them in every HTML string.
+const esc = v => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 // ---------------------------------------------------------------- MARKET
 // Every owned lot is always for sale at the price its owner sets. There are no
@@ -251,13 +292,14 @@ const brandName = id => id === 'you' ? state.you.brand.text + ' (you)' : RIVAL[i
 // the same rules (coin is proof of work). A bought building keeps its skyline
 // rank: height and reachedAt carry over to the new owner.
 // Coin burned into a lot: what the land costs today plus every floor above the first.
-function investment(l) { let s = lotPrice(l); for (let f = 1; f < l.floors; f++) s += Math.round(CFG.floorBaseCost * CFG.floorGrowth ** (f - 1)); return s; }
+function investment(l) { let s = lotPrice(l); for (let f = 1; f < l.floors; f++) s += floorCostAt(f); return s; }
 const defaultAsk = l => Math.round(investment(l) * (l.owner === 'you' ? CFG.askDefault : RIVAL[l.owner].markup * (heightRank(l) === 1 ? 1.4 : 1)));
 const ownerName = id => id === 'you' ? 'You' : RIVAL[id].name;
 const coinOf = id => id === 'you' ? state.coin : state.rivals.find(r => r.id === id).coin;
 function payTo(id, amt) { if (id === 'you') state.coin += amt; else state.rivals.find(r => r.id === id).coin += amt; }
 // buyer pays now (held until the write lands); if the price went up meanwhile, the buyer is refunded.
 function buyBuilding(l, buyer) {
+  if (CHAIN.on) { if (buyer === 'you' && l.owner && l.owner !== 'you' && l.floors && !l.pending) chainAct('buy', l, { expect: String(l.ask), mult: CFG.askDefault }, 'Buying', l.ask); return true; }
   const price = l.ask, seller = l.owner;
   if (!seller || seller === buyer || l.pending || !l.floors || coinOf(buyer) < price) return false;
   payTo(buyer, -price);
@@ -280,6 +322,7 @@ function buyBuilding(l, buyer) {
 }
 function setAsk(l, v) {
   v = Math.max(1, Math.round(+v || 0)); if (l.owner !== 'you' || l.pending || v === l.ask) return;
+  if (CHAIN.on) { chainAct('reprice', l, { price: String(v) }, 'Repricing'); return; }
   write(l, 'Repricing', () => { l.ask = v; note(`Your building at (${l.x},${l.y}) is now priced at ${v} coin.`); renderPanel(); });
   renderPanel();
 }
@@ -341,7 +384,7 @@ function placeAtDoor(c, door) {
 // ---------------------------------------------------------------- VEHICLES
 // Taxis drive the street grid with a rentable rooftop ad. Planes cross the sky
 // towing a banner. Both are ad space: views count like signs (human screens only).
-const brandInfo = id => id === 'you' ? state.you.brand : { text: RIVAL[id].name, icon: RIVAL[id].icon, color: RIVAL[id].color, art: RIVAL[id].art };
+const brandInfo = id => id === 'you' ? state.you.brand : { text: RIVAL[id].name, icon: RIVAL[id].icon, color: RIVAL[id].color, art: RIVAL[id].art, image: RIVAL[id].image };
 const randRival = () => RIVALS[Math.floor(Math.random() * RIVALS.length)].id;
 // Every vehicle uses the same driving model. len/w are half-length and half-width in tiles.
 const VK = {
@@ -365,7 +408,7 @@ const roadOK = (c, x, y) => inGrid(x, y) ? isStreet(x, y) && !closedFor(x, y) : 
 const BUS_STOPS = [{ x: MID, y: 2, sx: 1, sy: 0 }, { x: MID, y: N - 3, sx: -1, sy: 0 }, { x: 2, y: MID, sx: 0, sy: -1 }, { x: N - 3, y: MID, sx: 0, sy: 1 }].map(b => ({ ...b, waiting: 2 }));
 function spawnTaxi(i, kind = 'taxi') {
   const [x, y] = streets[Math.floor(Math.random() * streets.length)];
-  const rented = kind === 'taxi' && Math.random() < CFG.taxiRivalShare, K = VK[kind];
+  const rented = !CHAIN.on && kind === 'taxi' && Math.random() < CFG.taxiRivalShare, K = VK[kind];   // taxi ads aren't on chain yet
   const dirs = DIRS.filter(([dx, dy]) => inGrid(x + dx, y + dy) && isStreet(x + dx, y + dy)), [dx, dy] = dirs[Math.floor(Math.random() * dirs.length)];
   const c = { id: i, kind, x, y, fx: x, fy: y, tx: x + dx, ty: y + dy, t: Math.random(), dx, dy, pdx: dx, pdy: dy, v: K.vmax * 0.6, stuck: 0,
     lane: K.lane, stop: null, brk: false, hwy: kind === 'car' || kind === 'police', off: false, leave: false, vf: 0.85 + Math.random() * 0.25,
@@ -797,7 +840,8 @@ function rentBlimp() {
   note(`Your brand is on the blimp for ${CFG.blimpDays} days.`); renderPanel();
 }
 const inRect = (r, x, y) => r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
-function pickSpecial(sx, sy) { return inRect(state.blimp.rect, sx, sy) ? 'blimp' : inRect(state.plaza.rect, sx, sy) ? 'plaza' : null; }
+function pickSpecial(sx, sy) { if (CHAIN.on) return null;   // blimp and plaza rentals aren't on chain yet
+  return inRect(state.blimp.rect, sx, sy) ? 'blimp' : inRect(state.plaza.rect, sx, sy) ? 'plaza' : null; }
 const RAIN = new Float32Array(400 * 3).map((_, j) => { const i = (j / 3) | 0, k = j % 3; return k === 0 ? 620 + hash(i, 41) * 320 : hash(i, 42 + k - 1); });
 function drawWeather() {
   const W = innerWidth, H = innerHeight, k = state.wxK ?? 1, t = state.time;
@@ -850,7 +894,7 @@ function endDaySpectacle() {
   }
   pz.viewsToday = 0; bp.viewsToday = 0;
   if (bp.brand && --bp.days <= 0) { if (bp.brand === 'you') note('Your blimp rental ended.'); bp.brand = null; }
-  if (!bp.brand && Math.random() < 0.5) { bp.brand = randRival(); bp.days = CFG.blimpDays; }
+  if (!bp.brand && !CHAIN.on && Math.random() < 0.5) { bp.brand = randRival(); bp.days = CFG.blimpDays; }
   const was = state.weather; state.weather = rollWeather(); if (state.weather !== was) { state.wxPrev = was; state.wxK = 0; }
   state.event = ['', 'parade', '', 'market', '', 'marathon'][state.day % 6] || null; MARKET = null;
   WIND.x = Math.random() < 0.5 ? 1 : -1; WIND.base = 0.25 + Math.random() * 0.6;
@@ -966,13 +1010,27 @@ function artBitmap(s) {
   for (let i = 0; i < a.length; i++) if (a[i]) { g.fillStyle = ART_PAL[a[i]]; g.fillRect(i % ART_W, (i / ART_W) | 0, 1, 1); }
   ART_BMP.set(s, c); return c;
 }
+// Uploaded sign pictures: an inline PNG/JPEG/WebP, decoded into an ImageBitmap once
+// per data URL and drawn from the bitmap. Anything else (SVG included) is never drawn.
+const IMG_BMP = new Map();
+function brandBitmap(url) {
+  let e = IMG_BMP.get(url); if (e) return e;
+  e = { id: IMG_BMP.size + 1, bmp: null }; IMG_BMP.set(url, e);
+  const m = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(url);
+  if (m && url.length <= 40000 && typeof createImageBitmap === 'function') {
+    try { const bin = atob(m[2]), bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      createImageBitmap(new Blob([bytes], { type: m[1] })).then(b => { e.bmp = b; }, () => {}); } catch (_) { /* not base64: stays undrawn */ }
+  }
+  return e;
+}
 // Art billboard sprite: neon frame, the art at a whole number of device pixels per
 // art pixel (so it stays crisp), and a caption strip naming the brand.
 function artSprite(b, mine, scale = 2, glowOn = true) {
   const z = Math.max(0.6, cam.z), d = DPR(), px = Math.max(1, Math.round(scale * z * d)) / d;
   const aw = ART_W * px, ah = ART_H * px, fr = Math.max(2, Math.round(3 * z * Math.min(1, scale / 2))), bw = Math.ceil(aw + fr * 2), bh = Math.ceil(ah + fr * 2), pad = 10;
   const gq = glowOn ? Math.round(Math.min(1, E.n + (state.weather === 'rain' || state.weather === 'storm' ? 0.45 : 0)) * 4) : 0;
-  const hl = holder(`art|${b.art}|${b.color}|${mine}|${scale}|${glowOn}`);
+  const im = b.image ? brandBitmap(b.image) : null, pic = im && im.bmp;   // a picture, once decoded, replaces the pixel art
+  const hl = holder(`art|${b.art}|${b.color}|${mine}|${scale}|${glowOn}|${pic ? im.id : 0}`);
   return sprite(hl, gq + '|' + cam.z.toFixed(3) + '|' + d, bw + pad * 2, bh + pad * 2, pad + bw / 2, pad, () => {
     ctx.save();
     ctx.shadowColor = b.color; ctx.shadowBlur = glowOn ? 3 + 2.5 * gq + (mine ? 3 : 0) : 0;
@@ -980,7 +1038,9 @@ function artSprite(b, mine, scale = 2, glowOn = true) {
     ctx.strokeStyle = b.color; ctx.lineWidth = mine ? 2 : 1.3; ctx.stroke();
     ctx.restore();
     const ax = Math.round((pad + (bw - aw) / 2) * d) / d, ay = Math.round((pad + (bh - ah) / 2) * d) / d;
-    ctx.imageSmoothingEnabled = false; ctx.drawImage(artBitmap(b.art), ax, ay, aw, ah); ctx.imageSmoothingEnabled = true;
+    if (pic) { const k = Math.min(aw / pic.width, ah / pic.height), iw = pic.width * k, ih = pic.height * k;
+      ctx.drawImage(pic, ax + (aw - iw) / 2, ay + (ah - ih) / 2, iw, ih); return; }
+    ctx.imageSmoothingEnabled = false; ctx.drawImage(artBitmap(b.art || ''), ax, ay, aw, ah); ctx.imageSmoothingEnabled = true;
   });
 }
 
@@ -1300,7 +1360,7 @@ function endDay() {
   const paid = yours.filter(l => l.rentedBy).reduce((s, l) => s + l.rentPrice, 0);
   if (paid) { note(`Day ${state.day} rent collected: +${paid} coin.`);
     for (const l of yours) if (l.rentedBy) floatFx(l.x, l.y, `+${l.rentPrice}`, '#6fc3a8', 40); }
-  for (const l of offers) {
+  for (const l of CHAIN.on ? [] : offers) {   // no AI rent offers (or sign rentals) in chain mode
     if (Math.random() > 0.65) continue;
     const r = state.rivals[Math.floor(Math.random() * state.rivals.length)];
     // No other humans offline, so offers are priced on what makes a sign
@@ -1311,12 +1371,12 @@ function endDay() {
   }
   for (const c of state.taxis) {
     c.viewsToday = 0;
-    if (!c.brand) { if (Math.random() < 0.3) { c.brand = randRival(); c.days = CFG.rentDays; } continue; }
+    if (!c.brand) { if (!CHAIN.on && Math.random() < 0.3) { c.brand = randRival(); c.days = CFG.rentDays; } continue; }
     if (c.brand === 'pending') continue;
     if (--c.days <= 0) { if (c.brand === 'you') note(`Your ad on taxi #${c.id + 1} ended.`); c.brand = null; }
   }
   endDaySpectacle();
-  repriceRivals(); for (const r of state.rivals) r.appetite = 0;
+  if (!CHAIN.on) { repriceRivals(); for (const r of state.rivals) r.appetite = 0; }
   state.day++;
 }
 
@@ -2571,6 +2631,7 @@ function renderCompass() {
 let FIRST_RUN = true;   // set from storage once pref() exists
 function toggleHelp(force) { const h = $('help'), on = force !== undefined ? force : h.hidden; h.hidden = !on; if (on) pref('seenControls', '1'); }
 function pickTaxi(sx, sy) {
+  if (CHAIN.on) return null;   // taxi ads aren't on chain yet
   let best = null, bd = 16 * cam.z;
   for (const c of state.taxis) { const q = taxiPos(c), g = iso(q.x, q.y), d = Math.hypot(sx - g.x, sy - (g.y - 4 * cam.z)); if (d < bd) { bd = d; best = c; } }
   return best;
@@ -2615,22 +2676,31 @@ document.getElementById('grindToggle').onchange = e => { state.grinding = e.targ
 
 // ---------------------------------------------------------------- ACTIONS
 function buy(l) {
-  const p = lotPrice(l); if (l.owner || l.pending || state.coin < p) return;
+  const p = lotPrice(l); if (l.owner || l.pending) return;
+  if (CHAIN.on) { chainAct('claim', l, { price: String(Math.round(p * CFG.askDefault)), style: l.style }, 'Buying', p); return; }
+  if (state.coin < p) return;
   state.coin -= p; l.owner = 'you'; floatFx(l.x, l.y, `−${p} coin`, '#e57b6b', 10); SFX.coin();
   write(l, 'Buying', () => { l.floors = 1; SFX.build(); l.reachedAt = state.time; l.ask = defaultAsk(l); note(`You own the lot at (${l.x},${l.y}). It's listed at ${l.ask} coin: anyone can buy it at your price, so set it in the panel.`); renderPanel(); });
   note(`Burned ${p} coin to buy (${l.x},${l.y}). Publishing…`); renderPanel();
 }
 function raise(l) {
-  const c = floorCost(l); if (l.pending || state.coin < c || l.floors < 1) return;
+  const c = floorCost(l); if (l.pending || l.floors < 1 || !isFinite(c)) return;
+  if (CHAIN.on) { chainAct('raise', l, {}, 'Raising', c); return; }
+  if (state.coin < c) return;
   state.coin -= c; floatFx(l.x, l.y, `−${c} coin`, '#e57b6b', l.floors * CFG.floorPx + 20); SFX.coin();
   write(l, 'Raising', () => { l.floors++; SFX.build(); l.reachedAt = state.time; l.ask = (l.ask || 0) + Math.round(c * CFG.askDefault); note(`Floor ${l.floors} is up. Your price rose to ${l.ask} coin (the floor's cost × ${CFG.askDefault}).`);
-    const unlock = { 5: '🌿 a rooftop garden', 7: '📡 a rooftop antenna', 9: '🚁 a helipad', 12: '🗼 a spire' }[l.floors]; if (unlock) note(`Unlocked ${unlock} on your tower.`); renderPanel(); });
+    const unlock = UNLOCKS[l.floors]; if (unlock) note(`Unlocked ${unlock} on your tower.`); renderPanel(); });
   renderPanel();
 }
-function saveSign(l, text, icon, color, art) {
-  if (l.pending) return; state.you.brand = { text: text || 'My brand', icon, color, art: art || state.you.brand.art };
+// image: a data URL from brandImage(), '' for none, undefined to keep; link likewise (https only).
+function saveSign(l, text, icon, color, art, image, link) {
+  if (l.pending) return false;
+  const b0 = state.you.brand, img = image === undefined ? b0.image || '' : image, url = link === undefined ? b0.link || '' : link;
+  if (url && !checkLink(url)) { note('A sign link must be an https:// address.'); return false; }
+  if (CHAIN.on) { chainAct('brand', l, { brand: { name: text || 'My brand', art: art || b0.art, color, image: img || undefined, link: checkLink(url) || undefined } }, 'Updating sign'); return true; }
+  state.you.brand = { text: text || 'My brand', icon, color, art: art || b0.art, image: img, link: checkLink(url) || '' };
   write(l, 'Updating sign', () => { l.sign = { ...state.you.brand }; for (const m of state.lots.values()) if (m.owner === 'you' && m.sign) m.sign = { ...state.you.brand }; renderPanel(); });
-  renderPanel();
+  renderPanel(); return true;
 }
 function rentSign(l) {
   const p = rentAsk(l) * CFG.rentDays; if (l.rentedBy || l.pending || state.coin < p) return;
@@ -2684,9 +2754,14 @@ function renderLog() {
     el.append(d);
   });
 }
-function secsToAfford(cost) { return state.coin >= cost ? 0 : Math.ceil((cost - state.coin) / CFG.grindPerSec); }
+function secsToAfford(cost) {
+  if (CHAIN.on) return CHAIN.me && CHAIN.balance !== null && state.coin >= cost + Number(CHAIN.fee || 1) ? 0 : 1;   // chain: the write's fee too
+  return state.coin >= cost ? 0 : Math.ceil((cost - state.coin) / CFG.grindPerSec);
+}
+const waitText = wait => !CHAIN.on ? `Affordable in about ${wait}s of grinding.` : !CHAIN.wallet ? 'Selfhold couldn’t load, so this page can’t write.'
+  : !CHAIN.me ? 'Connect with Selfhold to play.' : 'Not enough coin yet: get testnet coin from the faucet.';
 let panelKey = '';
-function renderPanel() {
+function renderPanelView() {
   const el = $('panel'); const l = state.selected && lot(...state.selected);
   if (state.selSpecial === 'flight') {
     const t0 = state.bannerDraft || '';
@@ -2702,12 +2777,12 @@ function renderPanel() {
   if (state.selSpecial === 'market') {
     const all = [...state.lots.values()].filter(l => l.owner && l.floors && l.ask), mine = all.filter(l => l.owner === 'you');
     const others = all.filter(l => l.owner !== 'you').sort((a, b) => a.ask - b.ask);
-    const row = l => { const v = l.ask / investment(l); return `<div class="row mkt"><span title="${ownerName(l.owner)} · (${l.x},${l.y})">${l.owner === 'you' ? '⭐' : RIVAL[l.owner].icon} ${l.floors} fl · #${heightRank(l)}${facesMain(l) ? ' · main' : ''}</span>
+    const row = l => { const v = l.ask / investment(l); return `<div class="row mkt"><span title="${esc(ownerName(l.owner))} · (${l.x},${l.y})">${l.owner === 'you' ? '⭐' : esc(RIVAL[l.owner].icon)}${CHAIN.on && l.owner !== 'you' ? ` <span class="nm">${esc(RIVAL[l.owner].name)}</span> ·` : ''} ${l.floors} fl · #${heightRank(l)}${facesMain(l) ? ' · main' : ''}</span>
       <span><b>${l.ask}</b> <small class="muted">${v.toFixed(1)}×</small> <button class="secondary go" data-k="${l.x},${l.y}">Show</button>${l.owner !== 'you' ? ` <button class="buy" data-k="${l.x},${l.y}" ${state.coin < l.ask || l.pending ? 'disabled' : ''}>Buy</button>` : ''}</span></div>`; };
     el.innerHTML = `<h2>🏷 Marketplace</h2><div class="muted">Every building is always for sale at the price its owner sets. No taxes, no fees: the seller gets the whole price. The first purchase to confirm wins, and a bought building keeps its skyline rank. "×" is price over the coin burned into it.</div>
       <h3>Cheapest first</h3><div class="mktlist">${others.slice(0, 12).map(row).join('') || '<div class="muted">Nothing listed.</div>'}</div>
       <h3>Your buildings</h3>${mine.map(row).join('') || '<div class="muted">You don\'t own a building yet.</div>'}
-      <h3>Recent sales</h3>${state.sales.slice(0, CFG.recentSales).map(s => `<div class="row"><span>Day ${s.day} · (${s.x},${s.y}) ${s.floors}F</span><span>${ownerName(s.from)} → ${ownerName(s.to)} · <b>${s.price}</b></span></div>`).join('') || '<div class="muted">No sales yet.</div>'}`;
+      <h3>Recent sales</h3>${state.sales.slice(0, CFG.recentSales).map(s => `<div class="row"><span>Day ${s.day} · (${s.x},${s.y}) ${s.floors}F</span><span>${esc(ownerName(s.from))} → ${esc(ownerName(s.to))} · <b>${s.price}</b></span></div>`).join('') || '<div class="muted">No sales yet.</div>'}`;
     el.querySelectorAll('.go').forEach(b => b.onclick = () => { const [x, y] = b.dataset.k.split(',').map(Number); state.selSpecial = null; state.selected = [x, y];
       const q = iso(x, y); cam.x = Math.round(cam.x + (innerWidth - 344) / 2 - q.x); cam.y = Math.round(cam.y + innerHeight / 2 - q.y); renderPanel(); });
     el.querySelectorAll('.buy').forEach(b => b.onclick = () => { const [x, y] = b.dataset.k.split(',').map(Number); buyBuilding(lot(x, y), 'you'); renderPanel(); });
@@ -2716,9 +2791,9 @@ function renderPanel() {
   if (state.selSpecial === 'plaza') {
     const pz = state.plaza, h = pz.holder ? brandInfo(pz.holder) : null, nb = nextBid();
     el.innerHTML = `<h2>📺 Plaza billboard</h2><div class="muted">The giant screen over the central intersection. Each day it goes to the highest bidder for the next day. Beaten bids are refunded; the winning bid is burned.</div>
-      <div class="row"><span>Showing today</span><b>${h ? h.icon + ' ' + h.text : 'Nobody'}</b></div>
+      <div class="row"><span>Showing today</span><b>${h ? esc(h.icon + ' ' + h.text) : 'Nobody'}</b></div>
       <div class="row"><span>Human views today</span><b>${pz.viewsToday}</b></div>
-      <div class="row"><span>Top bid for tomorrow</span><b>${pz.top ? pz.top.amt + ' · ' + brandName(pz.top.brand) : 'none yet'}</b></div>
+      <div class="row"><span>Top bid for tomorrow</span><b>${pz.top ? pz.top.amt + ' · ' + esc(brandName(pz.top.brand)) : 'none yet'}</b></div>
       ${pz.top && pz.top.brand === 'you' ? '<div class="muted" style="margin-top:6px">You lead. Rivals can still outbid you before the day ends.</div>'
         : `<div style="margin-top:10px"><button id="bidBtn" ${state.coin < nb ? 'disabled' : ''}>Bid ${nb} coin for tomorrow</button></div>`}`;
     const bb = $('bidBtn'); if (bb) bb.onclick = myPlazaBid;
@@ -2727,7 +2802,7 @@ function renderPanel() {
   if (state.selSpecial === 'blimp') {
     const bp = state.blimp, b = bp.brand ? brandInfo(bp.brand) : null, cost = CFG.blimpPerDay * CFG.blimpDays;
     el.innerHTML = `<h2>🎈 The blimp</h2><div class="muted">Circles the whole city all day, high above the skyline. One brand at a time.</div>
-      <div class="row"><span>Side panel</span><b>${b ? b.icon + ' ' + b.text : 'Available'}</b></div>
+      <div class="row"><span>Side panel</span><b>${b ? esc(b.icon + ' ' + b.text) : 'Available'}</b></div>
       ${b ? `<div class="row"><span>Days left</span><span>${bp.days}</span></div><div class="row"><span>Human views today</span><b>${bp.viewsToday}</b></div>` : ''}
       ${!bp.brand ? `<div style="margin-top:10px"><button id="blimpBtn" ${state.coin < cost ? 'disabled' : ''}>Rent the blimp · ${cost} coin / ${CFG.blimpDays} days</button></div>`
         : bp.brand !== 'you' ? '<div class="muted" style="margin-top:6px">Booked. Check back when the lease ends.</div>' : ''}`;
@@ -2737,13 +2812,13 @@ function renderPanel() {
   if (state.selTaxi) {
     const c = state.selTaxi, cost = CFG.taxiAdPerDay * CFG.rentDays, b = c.brand && c.brand !== 'pending' ? brandInfo(c.brand) : null;
     el.innerHTML = `<h2>🚕 Taxi #${c.id + 1}</h2><div class="muted">Taxis roam the whole city, so a rooftop ad is seen far from your building.</div>
-      <div class="row"><span>Rooftop ad</span><b>${c.brand === 'pending' ? 'Publishing…' : b ? b.icon + ' ' + b.text : 'Available'}</b></div>
+      <div class="row"><span>Rooftop ad</span><b>${c.brand === 'pending' ? 'Publishing…' : b ? esc(b.icon + ' ' + b.text) : 'Available'}</b></div>
       ${b ? `<div class="row"><span>Days left</span><span>${c.days}</span></div><div class="row"><span>Human views today</span><b>${c.viewsToday}</b></div>` : ''}
       ${!c.brand ? `<div style="margin-top:10px"><button id="taxiBtn" ${state.coin < cost ? 'disabled' : ''}>Put your ad on it · ${cost} coin / ${CFG.rentDays} days</button></div>` : ''}`;
     const tb = $('taxiBtn'); if (tb) tb.onclick = () => rentTaxi(c);
     return;
   }
-  if (!state.selected) { el.innerHTML = `<h2>Skylot</h2><div class="muted">Tap a lot to see its price. Edge lots are cheapest; main-street lots get the most foot traffic. Drag to pan, scroll or pinch to zoom, Q / E to turn the city. Press ? for all controls.</div>`; return; }
+  if (!state.selected) { el.innerHTML = `<h2>Skylot</h2><div class="muted">${CHAIN.on ? 'This city lives on a Lattice chain: every lot, floor and sign is a record anyone can read. ' : ''}Tap a lot to see its price. Edge lots are cheapest; main-street lots get the most foot traffic. Drag to pan, scroll or pinch to zoom, Q / E to turn the city. Press ? for all controls.</div>`; return; }
   if (!l) { el.innerHTML = `<h2>Street</h2><div class="muted">Curios walk here. Busy streets are near tall buildings and main streets.</div>`; return; }
   const tags = `${facesMain(l) ? '<span class="tag hot">Main street</span>' : ''}<span class="tag">(${l.x},${l.y})</span>`;
   if (!l.owner) {
@@ -2751,36 +2826,42 @@ function renderPanel() {
     el.innerHTML = `<h2>Empty lot</h2>${tags}
       <div class="row"><span>Price</span><b>${p} coin</b></div>
       <div style="margin-top:10px"><button id="buyBtn" ${wait || l.pending ? 'disabled' : ''}>Buy lot · ${p} coin</button></div>
-      <div class="muted" style="margin-top:6px">${l.pending ? 'Publishing…' : wait ? `Affordable in about ${wait}s of grinding.` : 'The coin is burned, and the lot is yours once the write confirms.'}</div>`;
+      <div class="muted" style="margin-top:6px">${l.pending ? 'Publishing…' : wait ? waitText(wait) : 'The coin is burned, and the lot is yours once the write confirms.'}</div>`;
     $('buyBtn').onclick = () => buy(l); return;
   }
-  const s = signOf(l), owner = l.owner === 'you' ? 'You' : RIVAL[l.owner].name;
-  const common = `<div class="row"><span>Owner</span><b>${owner}</b></div>
+  const s = signOf(l), owner = esc(l.owner === 'you' ? 'You' : RIVAL[l.owner].name), link = s && checkLink(s.link);
+  const handle = l.owner !== 'you' && RIVAL[l.owner].handle, mk = handle && checkLink(CHAIN.bridge.handleURL(handle));
+  const common = `<div class="row"><span>Owner</span><b title="${esc(RIVAL[l.owner] ? RIVAL[l.owner].id : '')}">${owner}</b></div>
+    ${mk ? `<div class="row"><span>Moniker</span><span>${esc(new URL(mk).hostname)} <button class="secondary" id="monikerBtn" title="Opens ${esc(owner)} on ${esc(new URL(mk).hostname)} in a new tab">Open link</button></span></div>` : ''}
     <div class="row"><span>Floors</span><b>${l.floors || '—'}</b></div>
     <div class="row"><span>Skyline rank</span><b>${l.floors ? '#' + heightRank(l) : '—'}</b></div>
     <div class="row"><span>Human views today</span><b>${l.viewsToday}</b></div>
-    ${brandOf(l) === 'you' ? '<div class="muted">Counted when your sign is legible on another player’s screen. This offline prototype has no other players, so it stays at 0.</div>' : ''}
-    <div class="row"><span>Showing</span><span>${s ? s.icon + ' ' + s.text : 'no sign yet'}</span></div>`;
+    ${brandOf(l) === 'you' ? `<div class="muted">Counted when your sign is legible on another player’s screen. ${CHAIN.on ? 'Views aren’t on chain yet, so it stays at 0.' : 'This offline prototype has no other players, so it stays at 0.'}</div>` : ''}
+    <div class="row"><span>Showing</span><span>${s ? esc(s.icon + ' ' + s.text) : 'no sign yet'}</span></div>
+    ${link ? `<div class="row"><span>${l.owner === 'you' ? 'Your link' : `Link from ${owner}`}</span><span>${esc(new URL(link).hostname)} <button class="secondary" id="linkBtn" title="Opens ${esc(new URL(link).hostname)} in a new tab">Open link</button></span></div>` : ''}`;
   if (l.owner === 'you') {
     const c = floorCost(l), wait = secsToAfford(c), b = state.you.brand;
     if (!state.you.draft) state.you.draft = artDecode(b.art);
     el.innerHTML = `<h2>Your building</h2>${tags}${common}
-      ${l.rentedBy ? `<div class="muted">Rented by ${RIVAL[l.rentedBy].name} for ${l.rentDays} more day(s) at ${l.rentPrice}/day.</div>` : ''}
-      <div style="margin-top:10px"><button id="raiseBtn" ${wait || l.pending || !l.floors ? 'disabled' : ''}>${l.floors ? `Raise to ${l.floors + 1} floors · ${c} coin` : 'Raise (after the purchase confirms)'}</button></div>
-      <div class="muted" style="margin-top:4px">${l.pending ? l.pending.label + '…' : wait ? `Affordable in about ${wait}s of grinding.` : 'Burned coin is gone for good. Press R to raise.'}</div>
+      ${l.rentedBy ? `<div class="muted">Rented by ${esc(RIVAL[l.rentedBy].name)} for ${l.rentDays} more day(s) at ${l.rentPrice}/day.</div>` : ''}
+      <div style="margin-top:10px"><button id="raiseBtn" ${wait || l.pending || !l.floors || !isFinite(c) ? 'disabled' : ''}>${!isFinite(c) ? 'Top floor reached' : l.floors ? `Raise to ${l.floors + 1} floors · ${c} coin` : 'Raise (after the purchase confirms)'}</button></div>
+      <div class="muted" style="margin-top:4px">${l.pending ? l.pending.label + '…' : wait ? waitText(wait) : 'Burned coin is gone for good. Press R to raise.'}</div>
       ${l.floors ? `<h3>For sale</h3>
       <div class="row"><span>Your price</span><b>${l.ask} coin</b></div>
       <div class="row"><span>Coin burned into it</span><span>${investment(l)}</span></div>
       ${l.lastSale ? `<div class="row"><span>Last sale</span><span>${l.lastSale.price} · day ${l.lastSale.day}</span></div>` : ''}
       <div class="grid2"><input type="number" id="askIn" min="1" step="1" value="${l.ask}"><button class="secondary" id="askBtn" ${l.pending ? 'disabled' : ''}>Set price</button></div>
-      <div class="muted">Anyone can buy it at this price, at any time, and you get the whole price. A low price invites a buyout; a high one keeps it, at no cost.${l.ask < investment(l) * CFG.rivalAppetite[1] * (facesMain(l) ? 1.25 : 1) ? ' <b style="color:var(--accent)">At this price a rival may buy it.</b>' : ''}</div>` : ''}
+      <div class="muted">Anyone can buy it at this price, at any time, and you get the whole price. A low price invites a buyout; a high one keeps it, at no cost.${!CHAIN.on && l.ask < investment(l) * CFG.rivalAppetite[1] * (facesMain(l) ? 1.25 : 1) ? ' <b style="color:var(--accent)">At this price a rival may buy it.</b>' : ''}</div>` : ''}
       <h3>Your sign</h3>
-      <div class="muted">Signs are pictures only, no words. Paint your brand.</div>
+      <div class="muted">Signs are pictures only, no words. Upload a picture or paint one${CHAIN.on ? '. Your sign is your brand on chain: it shows on all your buildings' : ''}.</div>
+      <input type="file" id="imgIn" accept="image/png,image/jpeg,image/webp" title="PNG, JPEG or WebP; scaled down to 96 px">
+      <div class="grid2"><img id="imgPrev" alt="Your sign picture" ${signImage() ? '' : 'hidden'}><button class="secondary" id="imgClear" ${signImage() ? '' : 'hidden'}>Use pixel art instead</button></div>
       <canvas id="artEd" width="${ART_W * 8}" height="${ART_H * 8}"></canvas>
       <div id="artPal">${ART_PAL.map((c, i) => `<button class="sw ${i === state.you.pen ? 'on' : ''}" data-i="${i}" title="${i ? c : 'eraser'}" style="background:${c || 'repeating-conic-gradient(#555 0 25%, #333 0 50%) 0 0/8px 8px'}"></button>`).join('')}</div>
       <div class="grid2"><select id="artTpl"><option value="">Start from…</option>${Object.keys(ART_TEMPLATES).map(k => `<option>${k}</option>`).join('')}</select>
       <button class="secondary" id="artClear">Clear</button></div>
-      <div class="grid2"><input type="text" id="signText" maxlength="18" title="Your name on the skyline board (not shown on signs)" value="${b.text.replace(/"/g, '&quot;')}">
+      <input type="text" id="linkIn" maxlength="300" placeholder="https://… link (optional)" title="Shown as its domain when someone selects your building" value="${esc(state.you.draftLink !== undefined ? state.you.draftLink : b.link || '')}">
+      <div class="grid2"><input type="text" id="signText" maxlength="18" title="Your name on the skyline board (not shown on signs)" value="${esc(b.text)}">
       <select id="signColor" title="Neon frame colour">${SIGN_COLORS.map(c => `<option value="${c}" ${c === b.color ? 'selected' : ''} style="color:${c}">■ frame</option>`).join('')}</select></div>
       <div class="grid2"><button class="secondary" id="signBtn" ${l.pending || !l.floors ? 'disabled' : ''}>${l.sign ? 'Update sign' : 'Put up sign'}</button>
       <select id="styleSel">${Object.keys(STYLES).map(k => `<option ${k === l.style ? 'selected' : ''}>${k}</option>`).join('')}</select></div>
@@ -2789,8 +2870,9 @@ function renderPanel() {
       <div class="muted">Cosmetic. One more unlocks for every 3 goals you complete.</div>`;
     $('raiseBtn').onclick = () => raise(l);
     if ($('askBtn')) $('askBtn').onclick = () => setAsk(l, $('askIn').value);
-    $('signBtn').onclick = () => saveSign(l, $('signText').value.trim(), b.icon, $('signColor').value, artEncode(state.you.draft));
-    $('styleSel').onchange = e => { l.style = e.target.value; };
+    $('signBtn').onclick = () => { if (saveSign(l, $('signText').value.trim(), b.icon, $('signColor').value, artEncode(state.you.draft), signImage(), $('linkIn').value.trim())) { state.you.draftImage = undefined; state.you.draftLink = undefined; } };
+    $('styleSel').onchange = e => { if (CHAIN.on) chainAct('restyle', l, { style: e.target.value }, 'Restyling'); else l.style = e.target.value; };
+    mountImageInput();
     $('decorSel').onchange = e => { l.decor = e.target.value === 'none' ? null : e.target.value; };
     mountArtEditor();
     return;
@@ -2799,15 +2881,46 @@ function renderPanel() {
   const sale = l.floors && l.ask ? `<h3>For sale</h3><div class="row"><span>Price</span><b>${l.ask} coin</b></div>
     <div class="row"><span>Coin burned into it</span><span>${investment(l)}</span></div>
     ${l.lastSale ? `<div class="row"><span>Last sale</span><span>${l.lastSale.price} · day ${l.lastSale.day}</span></div>` : ''}
-    <div style="margin-top:8px"><button id="buyBldBtn" ${state.coin < l.ask || l.pending ? 'disabled' : ''}>Buy building · ${l.ask} coin</button></div>
-    <div class="muted" style="margin-top:4px">${l.pending ? l.pending.label + '…' : state.coin < l.ask ? `Affordable in about ${secsToAfford(l.ask)}s of grinding.` : 'You get the lot, every floor and its skyline rank. Your sign goes up.'}</div>` : '';
+    <div style="margin-top:8px"><button id="buyBldBtn" ${secsToAfford(l.ask) || l.pending ? 'disabled' : ''}>Buy building · ${l.ask} coin</button></div>
+    <div class="muted" style="margin-top:4px">${l.pending ? l.pending.label + '…' : secsToAfford(l.ask) ? waitText(secsToAfford(l.ask)) : 'You get the lot, every floor and its skyline rank. Your sign goes up.'}</div>` : '';
   el.innerHTML = `<h2>${owner}</h2>${tags}${common}${sale}
     ${l.rentedBy === 'you' ? `<div class="muted">Your ad is up here for ${l.rentDays} more day(s).</div>` :
-      l.rentedBy ? `<div class="muted">Rented by ${RIVAL[l.rentedBy].name}.</div>` :
+      l.rentedBy ? `<div class="muted">Rented by ${esc(RIVAL[l.rentedBy].name)}.</div>` : CHAIN.on ? '' :
       `<div style="margin-top:10px"><button id="rentBtn" ${state.coin < ask * CFG.rentDays || l.pending ? 'disabled' : ''}>Advertise here · ${ask * CFG.rentDays} coin / ${CFG.rentDays} days</button></div>
        <div class="muted" style="margin-top:4px">Your sign shows on their building, and its views count for you.</div>`}`;
   const rb = $('rentBtn'); if (rb) rb.onclick = () => rentSign(l);
   const bb = $('buyBldBtn'); if (bb) bb.onclick = () => { buyBuilding(l, 'you'); renderPanel(); };
+}
+// The panel, plus what every view shares: chain status, the connect button, and a sign's link.
+function renderPanel() {
+  renderPanelView();
+  const el = $('panel');
+  if (CHAIN.on) el.insertAdjacentHTML('afterbegin', chainBar());
+  const cb = $('connectBtn'); if (cb) cb.onclick = chainConnect;
+  const lb = $('linkBtn'), l = state.selected && lot(...state.selected), s = l && signOf(l);
+  if (lb) lb.onclick = () => openLink(s && s.link);
+  const mb = $('monikerBtn'), h = l && l.owner && l.owner !== 'you' && RIVAL[l.owner] && RIVAL[l.owner].handle;
+  if (mb && h) mb.onclick = () => openLink(CHAIN.bridge.handleURL(h));
+  const db = $('disconnectBtn'); if (db) db.onclick = chainDisconnect;
+  renderTalk();
+}
+// "Talk about this building": a Riposte thread per building, in its own card
+// that renderPanel never rebuilds. riposte.js mounts once per document, so
+// each thread lives in a same-origin frame (app/comments.html), made anew
+// only when the selected building changes; leaving it ends its timers.
+let talkKey = '';
+function renderTalk() {
+  const l = CHAIN.on && CHAIN.bridge && state.selected && lot(...state.selected);
+  const key = l && l.floors > 0 ? `skylot/${CHAIN.path}/lot/${l.x},${l.y}` : '';
+  if (key === talkKey) return;
+  talkKey = key; $('talk').hidden = !key; $('talkBox').textContent = '';
+  if (!key) return;
+  const f = document.createElement('iframe');
+  f.title = `Comments on the building at (${l.x},${l.y})`;
+  f.src = 'app/comments.html?page=' + encodeURIComponent(key);
+  f.onload = () => { try { const d = f.contentDocument, fit = () => { f.style.height = Math.max(120, d.documentElement.scrollHeight) + 'px'; };
+    new ResizeObserver(fit).observe(d.body); fit(); } catch (_) { /* not same-origin: keeps its fixed height */ } };
+  $('talkBox').append(f);
 }
 // Skyline board: each owner's tallest building. Ties go to whoever got there
 // first (earlier `reachedAt`), so matching a rival's height doesn't pass them.
@@ -2835,12 +2948,12 @@ function renderBoard() {
   state.leader = leader;
   const rank = list.findIndex(([id]) => id === 'you') + 1;
   const shown = list.map((e, i) => [...e, i + 1]).filter(([id], i) => i < 5 || id === 'you');
-  $('boardList').innerHTML = shown.map(([id, l, n]) => `<li value="${n}" class="${id === 'you' ? 'you' : ''}">${brandName(id)} · ${l.floors} floors</li>`).join('');
+  $('boardList').innerHTML = shown.map(([id, l, n]) => `<li value="${n}" class="${id === 'you' ? 'you' : ''}">${esc(brandName(id))} · ${l.floors} floors</li>`).join('');
   if (rank) {
     state.stats.bestRank = Math.min(state.stats.bestRank, rank);
     if (state.lastRank && rank < state.lastRank) {
       const passed = list[rank] && list[rank][0];
-      note(`You climbed to #${rank} on the skyline${passed ? `, passing ${brandName(passed)}` : ''}.`);
+      note(`You climbed to #${rank} on the skyline${passed ? `, passing ${brandName(passed)}` : ''}.`); if (passed) state.stats.passed = true;
       const mine = list[rank - 1][1]; floatFx(mine.x, mine.y, `#${rank}`, '#f2b45a', mine.floors * CFG.floorPx + 30);
     } else if (state.lastRank && rank > state.lastRank) note(`${brandName(list[rank - 2][0])} passed you on the skyline. You're #${rank}.`);
     state.lastRank = rank;
@@ -2855,14 +2968,14 @@ const GOALS = [
   { text: 'Buy your first lot', done: m => m.length > 0 },
   { text: 'Put up a sign', done: m => m.some(l => l.sign) },
   { text: 'Raise a building to 3 floors', done: m => m.some(l => l.floors >= 3) },
-  { text: 'Pass a rival on the skyline', done: () => state.stats.bestRank < RIVALS.length + 1 },
+  { text: 'Pass a rival on the skyline', done: () => CHAIN.on ? state.stats.passed : state.stats.bestRank < RIVALS.length + 1 },
   { text: 'Own a lot facing a main street', done: m => m.some(facesMain) },
-  { text: 'Rent out your sign', done: () => state.stats.rented },
-  { text: 'Put your ad on a taxi', done: () => state.stats.taxi },
-  { text: 'Fly a banner over the city', done: () => state.stats.flew },
-  { text: 'Light up the sky with fireworks', done: () => state.stats.fw },
-  { text: 'Win the plaza billboard', done: () => state.stats.plaza },
-  { text: 'Put your brand on the blimp', done: () => state.stats.blimp },
+  { text: 'Rent out your sign', done: () => state.stats.rented, offline: true },   // offline: products not on chain yet
+  { text: 'Put your ad on a taxi', done: () => state.stats.taxi, offline: true },
+  { text: 'Fly a banner over the city', done: () => state.stats.flew, offline: true },
+  { text: 'Light up the sky with fireworks', done: () => state.stats.fw, offline: true },
+  { text: 'Win the plaza billboard', done: () => state.stats.plaza, offline: true },
+  { text: 'Put your brand on the blimp', done: () => state.stats.blimp, offline: true },
   { text: 'Unlock a helipad (9 floors)', done: m => m.some(l => l.floors >= 9) },
   { text: 'Light your district’s beacon', done: m => { const b = beaconSet(); return m.some(l => b.has(l)); } },
   { text: 'Make the top 3 on the skyline', done: () => state.stats.bestRank <= 3 },
@@ -2871,9 +2984,10 @@ const GOALS = [
 const goalsDone = new Set();
 function renderGoals() {
   const mine = [...state.lots.values()].filter(l => l.owner === 'you' && l.floors > 0);
-  GOALS.forEach((g, i) => { if (!goalsDone.has(i) && g.done(mine)) { goalsDone.add(i); note(`Goal complete: ${g.text}.`); } });
-  const next = GOALS.map((g, i) => ({ ...g, i })).filter(g => !goalsDone.has(g.i)).slice(0, 3);
-  $('goals').innerHTML = `<h2>Goals <span class="muted">${goalsDone.size}/${GOALS.length}</span></h2>` +
+  const skip = g => g.offline && CHAIN.on;
+  GOALS.forEach((g, i) => { if (!skip(g) && !goalsDone.has(i) && g.done(mine)) { goalsDone.add(i); note(`Goal complete: ${g.text}.`); } });
+  const next = GOALS.map((g, i) => ({ ...g, i })).filter(g => !skip(g) && !goalsDone.has(g.i)).slice(0, 3);
+  $('goals').innerHTML = `<h2>Goals <span class="muted">${goalsDone.size}/${GOALS.filter(g => !skip(g)).length}</span></h2>` +
     (next.length ? next.map((g, k) => `<div class="row"><span>${k === 0 ? '▶' : '○'} ${g.text}</span></div>`).join('') : '<div class="muted">All done. You own the skyline.</div>');
 }
 // View options, remembered per browser.
@@ -2887,8 +3001,16 @@ $('flyBtn').onclick = () => { state.selSpecial = 'flight'; state.selected = null
 $('fwBtn').onclick = () => buyFireworks();
 $('soundBtn').onclick = () => { sfxInit(); sfxSet(!sfx.on); };
 $('speedBtn').onclick = () => { state.speed = state.speed === 1 ? 3 : 1; $('speedBtn').textContent = state.speed + '×'; };
+if (CHAIN.on) {   // coin comes from the operator's faucet for now; sky ads aren't on chain yet
+  document.body.classList.add('chain');
+  $('grindChip').hidden = true; $('skyChip').hidden = true; $('faucetChip').hidden = false;
+  $('copyAddr').onclick = () => { const a = CHAIN.me; if (!a) return;
+    if (navigator.clipboard) navigator.clipboard.writeText(a).then(() => note('Your address is copied. Send it to the faucet operator for testnet coin.'), () => note(`Your address: ${a}`));
+    else note(`Your address: ${a}`); };
+}
 function renderHud() {
-  $('coin').textContent = Math.floor(state.coin);
+  $('coin').textContent = CHAIN.on ? (CHAIN.balance === null ? '—' : String(CHAIN.balance)) : Math.floor(state.coin);
+  if (CHAIN.on) { $('copyAddr').hidden = !CHAIN.me; $('faucetText').textContent = CHAIN.me ? 'The operator\'s faucet sends coin to your account.' : 'Connect with Selfhold, then ask the operator\'s faucet for coin.'; }
   if (E) $('vignette').style.opacity = (0.7 + 0.5 * E.n).toFixed(2);
   $('flyBtn').textContent = `✈ Fly a banner · ${CFG.bannerPerChar}/letter`; $('flyBtn').disabled = state.weather === 'storm';
   $('fwBtn').textContent = `🎆 Fireworks · ${CFG.fireworksCost}`; $('fwBtn').disabled = state.coin < CFG.fireworksCost;
@@ -2900,12 +3022,200 @@ function renderHud() {
   const owns = [...state.lots.values()].filter(l => l.owner === 'you');
   let hint;
   if (FIRST_RUN && state.time < 25) hint = 'Drag to pan · scroll or pinch to zoom · Q / E to turn the city · press ? for all controls';
-  else if (!owns.length) hint = 'Your device is grinding for a sponsor. Tap lots to compare prices: edge lots are cheapest, main-street lots get the most foot traffic.';
+  else if (!owns.length) hint = (CHAIN.on ? '' : 'Your device is grinding for a sponsor. ') + 'Tap lots to compare prices: edge lots are cheapest, main-street lots get the most foot traffic.';
   else if (!owns.some(l => l.sign)) hint = 'Select your building and put up a sign. It counts a view each time it shows up legibly on another player’s screen.';
   else if (owns.every(l => l.floors < 3)) hint = 'Raise your building: every floor climbs the skyline board, and taller signs are easier to spot.';
-  else hint = 'Climb the skyline: the top bar shows how many floors you need to pass the next rival. They are raising too.';
+  else hint = CHAIN.on ? 'Climb the skyline: the top bar shows how many floors you need to pass the next building owner.' : 'Climb the skyline: the top bar shows how many floors you need to pass the next rival. They are raising too.';
   $('hintText').textContent = hint;
 }
+
+// ---------------------------------------------------------------- CHAIN
+// Chain mode (see CHAIN MODE near the top). The chain is the city: every ~5 s
+// (and after each write) the page reads it through window.SkylotChain and maps
+// it into state.lots. Acts become wallet writes; a lot shows its pending label
+// until the chain has the write, or the log says why it didn't land.
+const CHAIN_POLL_MS = 5000;
+// Links are https only: client/skylot.mjs safeLink when it's loaded (chain mode,
+// or offline over http). Offline on file:// a plain https check stands in.
+function checkLink(u) {
+  if (!u) return '';
+  if (CHAIN.safeLink) return CHAIN.safeLink(u) || '';
+  try { const x = new URL(u); return u.length <= 300 && x.protocol === 'https:' && x.hostname && !x.username && !x.password ? x.href : ''; } catch (_) { return ''; }
+}
+// Never navigates by itself: only from the panel's "Open link" button, after showing the domain.
+function openLink(u) { const ok = checkLink(u); if (ok) window.open(ok, '_blank', 'noopener,noreferrer'); }
+// ---- sign pictures: PNG/JPEG/WebP only, decoded, scaled to 96 px at most and
+// re-encoded (WebP, else PNG) until the data URL fits in 24,000 bytes.
+const IMG_MAX = 96, IMG_BYTES = 24000;
+const signImage = () => state.you.draftImage !== undefined ? state.you.draftImage : state.you.brand.image || '';
+async function brandImage(file) {
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) throw new Error('Use a PNG, JPEG or WebP picture for your sign (SVG isn’t allowed).');
+  if (file.size > 20e6) throw new Error('That picture is too large.');
+  let bmp; try { bmp = await createImageBitmap(file); } catch (_) { throw new Error('That picture couldn’t be read.'); }
+  try {
+    for (let side = IMG_MAX; side >= 24; side = Math.floor(side * 0.8)) {
+      const k = Math.min(1, side / Math.max(bmp.width, bmp.height)), c = newCanvas(Math.max(1, Math.round(bmp.width * k)), Math.max(1, Math.round(bmp.height * k)));
+      const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(bmp, 0, 0, c.width, c.height);
+      for (let q = 0.9; q >= 0.35; q -= 0.1) { const u = c.toDataURL('image/webp', q); if (!u.startsWith('data:image/webp;')) break; if (u.length <= IMG_BYTES) return u; }
+      const png = c.toDataURL('image/png'); if (png.length <= IMG_BYTES) return png;
+    }
+  } finally { if (bmp.close) bmp.close(); }
+  throw new Error('That picture has too much detail to fit on a sign. Try a simpler one.');
+}
+function mountImageInput() {
+  const prev = $('imgPrev'), clear = $('imgClear');
+  const show = () => { const u = signImage(); prev.hidden = clear.hidden = !u; if (u) prev.src = u; else prev.removeAttribute('src'); };
+  $('imgIn').onchange = async e => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    try { state.you.draftImage = await brandImage(f); show(); note(`Picture ready. Press ${$('signBtn').textContent} to put it up.`); }
+    catch (err) { note(err.message); } finally { e.target.value = ''; }
+  };
+  clear.onclick = () => { state.you.draftImage = ''; show(); };
+  $('linkIn').oninput = e => { state.you.draftLink = e.target.value; };
+  show();
+}
+// ---- owners: each address gets a RIVAL entry from its brand, so every place
+// that shows an owner (names, colours, signs, the board) works unchanged.
+const strHash = t => { let h = 2166136261; for (let i = 0; i < t.length; i++) h = Math.imul(h ^ t.charCodeAt(i), 16777619); return h >>> 0; };
+const shortAddr = a => CHAIN.bridge && CHAIN.bridge.shortAccount ? CHAIN.bridge.shortAccount(a) : a.length > 14 ? a.slice(0, 7) + '…' + a.slice(-4) : a;
+// How an owner is named: their verified Moniker @handle, else their brand's name
+// (cleaned by Moniker's rules, so it can never look like a handle), else their short ID.
+const chainLabel = (a, name, handle) => CHAIN.bridge ? CHAIN.bridge.label(a, { name: handle ? undefined : name, handle }) : shortAddr(a);
+const toHex = c => '#' + c.map(v => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join('');
+const FALLBACK_ART = ['sun', 'heart', 'skyline', 'noodles', 'bulb', 'tulip', 'diamond', 'croissant', 'tower'];
+function chainOwner(addr, b) {
+  const h = strHash(addr), r = RIVAL[addr] || (RIVAL[addr] = { id: addr, icon: '🏢', markup: CFG.askDefault, chain: true });
+  r.handle = CHAIN.handles.get(addr); r.name = chainLabel(addr, b && b.name, r.handle);
+  r.brandName = (CHAIN.bridge && CHAIN.bridge.displayName(b && b.name)) || r.name;   // what the "Showing" row says
+  r.color = (b && b.color) || toHex(hsl(h % 360, 0.62, 0.64));
+  r.art = (b && b.art) || r.fallbackArt || (r.fallbackArt = artEncode(ART_TEMPLATES[FALLBACK_ART[h % FALLBACK_ART.length]]()));
+  r.image = (b && b.image) || ''; r.link = (b && b.link) || '';
+  return r;
+}
+const UNLOCKS = { 5: '🌿 a rooftop garden', 7: '📡 a rooftop antenna', 9: '🚁 a helipad', 12: '🗼 a spire' };
+// city: { lots: [{ x, y, owner, price, floors, style, at }], brands: { address: brand } }, from the bridge.
+function chainApply(city) {
+  const me = CHAIN.me, first = !CHAIN.synced, seen = new Set(), mine = me && city.brands[me], bk = mine ? JSON.stringify(mine) : '';
+  if (bk !== CHAIN.brandKey) {
+    CHAIN.brandKey = bk; CHAIN.hasBrand = !!mine;
+    if (mine) { const b = state.you.brand;
+      state.you.brand = { text: mine.name || 'My brand', icon: b.icon, color: mine.color || b.color, art: mine.art || '', image: mine.image || '', link: mine.link || '' };
+      if (!state.artPainting) state.you.draft = null; }
+  }
+  for (const c of city.lots) {
+    const l = lot(c.x, c.y); if (!l) continue; seen.add(l);
+    const owner = me && c.owner === me ? 'you' : c.owner, r = owner === 'you' ? null : chainOwner(c.owner, city.brands[c.owner]);
+    if (!first && l.owner && l.owner !== owner) chainSold(l, owner);
+    l.owner = owner; l.ask = c.price; l.floors = c.floors; l.reachedAt = c.at || 0; if (c.style) l.style = c.style;
+    if (first) l.df = l.floors;   // the city appears built; later changes grow as usual
+    l.sign = !c.floors ? null : owner === 'you' ? (CHAIN.hasBrand ? { ...state.you.brand } : null)
+      : { text: r.brandName, icon: r.icon, color: r.color, art: r.art, image: r.image, link: r.link };
+  }
+  if (me) CHAIN.youName = chainLabel(me, mine && mine.name, CHAIN.handles.get(me));
+  for (const l of state.lots.values()) if (!seen.has(l) && l.owner) Object.assign(l, { owner: null, floors: 0, sign: null, ask: 0 });
+  CHAIN.city = city; CHAIN.synced = true;
+}
+// Owners' @handles: one Moniker read for every owner, when the owners change or
+// once a minute. It never holds up the city; if Moniker can't be read, names
+// fall back to brands and short IDs without a word.
+async function chainHandles(city) {
+  const B = CHAIN.bridge; if (!B || !B.moniker || CHAIN.handlesBusy) return;
+  const owners = [...new Set([...city.lots.map(c => c.owner), ...(CHAIN.me ? [CHAIN.me] : [])])].sort(), sig = owners.join();
+  if (sig === CHAIN.handlesSig && Date.now() - CHAIN.handlesAt < 60000) return;
+  CHAIN.handlesBusy = true; CHAIN.handlesSig = sig; CHAIN.handlesAt = Date.now();
+  try { const hs = await B.handles(owners); CHAIN.handles = new Map(owners.map((a, i) => [a, hs[i] || undefined])); if (CHAIN.city) chainApply(CHAIN.city); }
+  catch (_) { /* Moniker unread: asked again in a minute */ }
+  finally { CHAIN.handlesBusy = false; }
+}
+function chainSold(l, to) {
+  const sale = { x: l.x, y: l.y, floors: l.floors, price: l.ask, from: l.owner, to, day: state.day };
+  l.lastSale = sale; state.sales.unshift(sale); state.sales.length = Math.min(state.sales.length, 40);
+  if (l.owner === 'you') { note(`${ownerName(to)} bought your ${l.floors}-floor building at (${l.x},${l.y}) for your price, ${l.ask} coin.`); floatFx(l.x, l.y, `+${l.ask}`, '#6fc3a8', 40); state.stats.sold = true; }
+  else if (to !== 'you') floatFx(l.x, l.y, 'SOLD', '#6fc3a8', l.floors * CFG.floorPx + 24);
+}
+async function chainSyncNow() {
+  const B = CHAIN.bridge; if (!B) return;
+  try {
+    if (CHAIN.wallet) { const a = await B.address(); if (a !== CHAIN.me) { CHAIN.me = a; CHAIN.synced = false; CHAIN.balance = null; } }
+    const city = await B.city(CHAIN.me);
+    chainApply(city); chainHandles(city);
+    if (CHAIN.fee === null) CHAIN.fee = await B.fee().catch(() => null);
+    if (CHAIN.me) { CHAIN.balance = await B.balance(CHAIN.me).catch(() => CHAIN.balance); state.coin = CHAIN.balance === null ? 0 : Number(CHAIN.balance); }
+    CHAIN.error = null;
+  } catch (e) { CHAIN.error = `Can't read the city from ${CHAIN.node}: ${(e && e.message) || e}`; }
+}
+// Reads queue behind each other, so a read after a write sees the write's result.
+function chainSync() { return CHAIN.sync = (CHAIN.sync || Promise.resolve()).then(chainSyncNow); }
+function chainBar() {
+  const st = CHAIN.error ? `<div class="bad">${esc(CHAIN.error)}</div>` : !CHAIN.synced ? '<div>Reading the city from the chain…</div>' : '';
+  const w = !CHAIN.bridge || CHAIN.wallet === undefined ? ''
+    : !CHAIN.wallet ? '<div>Read-only: Selfhold couldn’t load, so this page can’t write.</div>'
+    : !CHAIN.me ? `<div>Connect with Selfhold to buy and build. ${CHAIN.bridge.walletKind() === 'extension' ? 'Selfhold for Chrome signs every write.' : 'Selfhold’s passkey window signs every write: no extension or password needed.'} This page holds no key.</div><div style="margin-top:6px"><button id="connectBtn">Connect with Selfhold</button></div>`
+    : `<div class="row" style="align-items:center;margin:0"><span>Playing as <b title="${esc(CHAIN.me)}">${esc(CHAIN.youName || shortAddr(CHAIN.me))}</b> on ${esc(CHAIN.path)}</span><button class="secondary" id="disconnectBtn" style="padding:2px 8px;font-size:12px">Disconnect</button></div>`;
+  return st || w ? `<div class="chainbar">${st}${w}</div>` : '';
+}
+// Only ever from a click (the button, or an act that needs the wallet).
+async function chainConnect() {
+  if (!CHAIN.bridge || !CHAIN.wallet) return false;
+  try { CHAIN.me = await CHAIN.bridge.connect(); } catch (e) { note((e && e.message) || 'The wallet did not answer.'); return false; }
+  CHAIN.synced = false; CHAIN.balance = null; await chainSync(); renderPanel();
+  return !!CHAIN.me;
+}
+async function chainDisconnect() {
+  if (!CHAIN.bridge) return;
+  await CHAIN.bridge.disconnect();
+  CHAIN.me = null; CHAIN.youName = ''; CHAIN.balance = null; CHAIN.synced = false; state.coin = 0;
+  await chainSync(); renderPanel(); note('Disconnected from Selfhold. The city is read-only until you connect again.');
+}
+// One act as one wallet write: `label` shows on the lot until the chain has it.
+async function chainAct(kind, l, args, label, cost = 0) {
+  if (!CHAIN.bridge) { note(CHAIN.error || 'Still connecting to the chain…'); return; }
+  if (!CHAIN.wallet) { note('Selfhold couldn’t load, so this page can’t write.'); return; }
+  if (l.pending) return;
+  if (!CHAIN.me && !(await chainConnect())) return;
+  if (l.pending || (kind === 'buy' && l.owner === 'you')) return;   // connecting may show it's yours already
+  if (kind === 'claim' && l.owner) { note(`Someone else owns (${l.x},${l.y}) now.`); return; }
+  const fee = CHAIN.fee === null ? 1n : CHAIN.fee;
+  if (CHAIN.balance !== null && cost && isFinite(cost) && CHAIN.balance < BigInt(Math.ceil(cost)) + fee) {
+    note(`Not enough coin: this needs ${cost} coin plus the ${fee} coin fee, and you have ${CHAIN.balance}. Get testnet coin from the faucet.`); return; }
+  l.pending = { label, until: Infinity };   // never applied by tick(): the chain decides
+  renderPanel();
+  if (cost) SFX.coin();
+  let r;
+  try { r = await CHAIN.bridge.perform(kind, { x: l.x, y: l.y, ...args }); } catch (e) { r = { ok: false, text: (e && e.message) || 'The write failed.' }; }
+  if (r.again) { CHAIN.me = null; CHAIN.synced = false; }   // Selfhold's account for this site changed or is gone: read it again
+  await chainSync();
+  l.pending = null;
+  if (r.ok) chainLanded(kind, l); else note(r.text);
+  renderPanel();
+}
+function chainLanded(kind, l) {
+  const at = `(${l.x},${l.y})`;
+  if (kind === 'claim') { SFX.build(); note(`You own the lot at ${at}. It's listed at ${l.ask} coin: anyone can buy it at your price, so set it in the panel.`); }
+  else if (kind === 'raise') { SFX.build(); note(`Floor ${l.floors} is up at ${at}.`); if (UNLOCKS[l.floors]) note(`Unlocked ${UNLOCKS[l.floors]} on your tower.`); }
+  else if (kind === 'buy') { SFX.build(); state.stats.bought = true; floatFx(l.x, l.y, 'Yours!', '#f2b45a', l.floors * CFG.floorPx + 24);
+    note(`You bought the ${l.floors}-floor building at ${at}; its skyline rank came with it. It's listed at ${l.ask} coin.`); }
+  else if (kind === 'reprice') note(`Your building at ${at} is now priced at ${l.ask} coin.`);
+  else if (kind === 'restyle') note(`Your building at ${at} is now ${l.style}.`);
+  else if (kind === 'brand') note('Your sign is on the chain, on every building you own.');
+}
+async function chainBoot() {
+  const B = window.SkylotChain;
+  if (B) await B.ready;
+  if (B && B.lib) CHAIN.safeLink = B.lib.safeLink;
+  if (!CHAIN.on) return;
+  if (!B || B.error || !B.city) {
+    CHAIN.error = location.protocol === 'file:'
+      ? 'Chain mode needs the page served over http(s): run python3 -m http.server in the Skylot folder and open http://localhost:8000/ with the same ?node=…&chain=… (or add ?offline).'
+      : `Couldn't load the chain client: ${B && B.error ? B.error.message || B.error : 'this browser has no module scripts'}.`;
+    renderPanel(); return;
+  }
+  CHAIN.lib = B.lib; CHAIN.bridge = B;
+  CHAIN.wallet = await B.wallet();   // waits briefly for lattice#initialized
+  const loop = async () => { await chainSync(); setTimeout(loop, CHAIN_POLL_MS); };
+  loop();
+}
+if (document.readyState === 'loading') addEventListener('DOMContentLoaded', chainBoot); else chainBoot();
 
 // ---------------------------------------------------------------- LOOP
 let last = performance.now(), uiT = 0, simAcc = 0, lastDraw = 0;
@@ -2914,10 +3224,12 @@ const SIM_STEP = 1 / 60;
 const fpsParam = +new URLSearchParams(location.search).get('fps') || 0;
 const frameCap = () => !document.hasFocus() && !location.search.includes('demo') ? 30 : fpsParam || 60;
 function tick(dt) {
-  if (!state.priced) { state.priced = true; repriceRivals(); }
+  if (!state.priced && !CHAIN.on) { state.priced = true; repriceRivals(); }
   state.time += dt;
-  if (state.grinding) state.coin += CFG.grindPerSec * dt;
-  for (const r of state.rivals) r.coin += r.rate * dt;
+  if (!CHAIN.on) {   // chain mode: coin is the wallet's balance, and there are no AI rivals
+    if (state.grinding) state.coin += CFG.grindPerSec * dt;
+    for (const r of state.rivals) r.coin += r.rate * dt;
+  }
   for (const l of state.lots.values()) {
     if (l.pending && state.time >= l.pending.until) { const a = l.pending.apply; l.pending = null; a(); }
     if (l.df !== l.floors) { l.df += (l.floors - l.df) * Math.min(1, dt * 4); if (Math.abs(l.floors - l.df) < 0.01) l.df = l.floors; }
@@ -2925,7 +3237,7 @@ function tick(dt) {
   for (const f of state.fx) f.t += dt;
   state.fx = state.fx.filter(f => f.t < 1.4);
   state.attrT -= dt; if (state.attrT <= 0) { rebuildAttraction(); state.attrT = 2; }
-  state.rivalT += dt; if (state.rivalT >= CFG.rivalActEverySec) { state.rivalT = 0; rivalsAct(); }
+  if (!CHAIN.on) { state.rivalT += dt; if (state.rivalT >= CFG.rivalActEverySec) { state.rivalT = 0; rivalsAct(); } }
   state.dayT += dt; if (state.dayT >= CFG.dayLengthSec) { state.dayT = 0; endDay(); }
   for (const c of state.curios) stepCurio(c, dt);
   stepPeople(dt); stepTraffic(dt);
@@ -2949,20 +3261,20 @@ function frame(now) {
   draw();
   drawTurnFade();
   uiT -= dt; if (uiT <= 0) { uiT = 0.25; renderHud(); renderBoard(); renderGoals();
-    const k = JSON.stringify([state.sales.length, state.selSpecial === 'market' && [...state.lots.values()].map(l => l.ask + (l.pending ? 'p' : '')).join(), state.selected && lot(...state.selected) && lot(...state.selected).ask, state.selSpecial, state.plaza.holder, state.plaza.top && state.plaza.top.amt, state.plaza.viewsToday, state.blimp.brand, state.blimp.days, state.blimp.viewsToday, state.selTaxi && [state.selTaxi.id, state.selTaxi.brand, state.selTaxi.days, state.selTaxi.viewsToday], state.selected, Math.floor(state.coin), state.selected && lot(...state.selected) && [lot(...state.selected).viewsToday, lot(...state.selected).floors, !!lot(...state.selected).pending, lot(...state.selected).owner]]);
+    const k = JSON.stringify([state.sales.length, state.selSpecial === 'market' && [...state.lots.values()].map(l => l.ask + (l.pending ? 'p' : '')).join(), state.selected && lot(...state.selected) && lot(...state.selected).ask, state.selSpecial, state.plaza.holder, state.plaza.top && state.plaza.top.amt, state.plaza.viewsToday, state.blimp.brand, state.blimp.days, state.blimp.viewsToday, state.selTaxi && [state.selTaxi.id, state.selTaxi.brand, state.selTaxi.days, state.selTaxi.viewsToday], state.selected, Math.floor(state.coin), state.selected && lot(...state.selected) && [lot(...state.selected).viewsToday, lot(...state.selected).floors, !!lot(...state.selected).pending, lot(...state.selected).owner, lot(...state.selected).style], CHAIN.on && [CHAIN.error, CHAIN.synced, CHAIN.me, CHAIN.wallet === undefined ? 0 : CHAIN.wallet ? 1 : 2, CHAIN.brandKey, String(CHAIN.balance)]]);
     if (k !== panelKey && !state.artPainting && !(document.activeElement && ['INPUT', 'SELECT'].includes(document.activeElement.tagName))) { panelKey = k; renderPanel(); } }
 }
-note('Welcome to Skylot. Your device is grinding coin for a sponsor. Find a lot you can afford.');
+note(CHAIN.on ? `Welcome to Skylot on ${CHAIN.path}. Land, buildings and signs are on the chain; Selfhold signs every write.` : 'Welcome to Skylot. Your device is grinding coin for a sponsor. Find a lot you can afford.');
 renderPanel(); renderCompass(); requestAnimationFrame(frame);
 
 // Test hook: lets an automated run fast-forward and act (used for QA screenshots).
-window.__curio = { state, CFG, lot, buy, raise, saveSign, lotPrice, floorCost, endDay, perfStats };
+window.__curio = { state, CFG, lot, buy, raise, saveSign, lotPrice, floorCost, endDay, perfStats, chain: CHAIN, chainSync };
 
 
 { const tp = new URLSearchParams(location.search).get('t'); if (tp !== null) setTimeout(() => { state.dayT = +tp * CFG.dayLengthSec; }, 0); }
 // ?demo: skip the opening wait so a screenshot shows a built-up lot.
 // Runs the real actions and fast-forwards the simulation in fixed steps.
-if (location.search.includes('demo')) {
+if (location.search.includes('demo') && !CHAIN.on) {
   const run = secs => { for (let i = 0; i < secs * 10; i++) tick(0.1); };
   state.coin = 120;
   const l = lot(14, 10);                       // an edge lot
@@ -3005,6 +3317,169 @@ if (location.search.includes('demo')) {
 function benchDraw(n = 120) { const t = []; for (let i = 0; i < n; i++) { const a = performance.now(); draw(); ctx.getImageData(0, 0, 1, 1); t.push(performance.now() - a); }
   t.sort((x, y) => x - y); return { n, mean: +(t.reduce((s, v) => s + v, 0) / n).toFixed(2), p50: +t[n >> 1].toFixed(2), p95: +t[Math.floor(n * 0.95)].toFixed(2) }; }
 if (location.search.includes('bench')) { benchDraw(20); console.log('CURIO_BENCH ' + JSON.stringify({ ...benchDraw(), backing: cv.width + 'x' + cv.height })); }
+</script>
+<script type="module">
+// Chain mode's bridge (see CHAIN MODE in the script above, which sets
+// window.SKYLOT_BRIDGE before this runs). Every read and write goes through
+// client/skylot.mjs; reads are verified by CID (client/state.mjs); writes go
+// to Selfhold (app/vendor/selfhold.mjs): Selfhold for Chrome where installed,
+// else Selfhold's passkey window at wallet.selfhold.app, so the page holds no
+// key. Owners' @handles come from Moniker (app/vendor/moniker/). A test can
+// stand in for the wallet by defining window.lattice before the page loads,
+// with isLatticeWallet: true, connect(), address(), disconnect() and
+// writeRecords(request): Selfhold's client uses it as Selfhold for Chrome.
+const want = window.SKYLOT_BRIDGE;
+if (want) {
+  const bridge = window.SkylotChain = { lib: null, error: null };
+  bridge.ready = (async () => {
+    const S = bridge.lib = await import('./client/skylot.mjs');
+    if (!want.node) return;   // offline over http: only the record helpers
+    const [sdk, St, Sh] = await Promise.all([import('./app/vendor/lattice-sdk.js'), import('./client/state.mjs'), import('./app/vendor/selfhold.mjs')]);
+    // Moniker is a nicety: if it can't load or be read, owners show as their brand or short ID.
+    const M = await import('./app/vendor/moniker/index.mjs').catch(() => null);
+    const nodeURL = want.node.replace(/\/+$/, ''), chainPath = want.chain.split('/').filter(Boolean);
+    const volumes = new sdk.VolumeClient(new sdk.HTTPVolumeTransport(`${nodeURL}/volumes`, { chainPath }));
+    const load = St.volumeLoader(volumes, sdk.decodeDagCbor);   // trie nodes are immutable: kept for the session
+    const view = async () => St.view(load, (await St.tip(sdk, nodeURL, chainPath, volumes)).generalStateCID);
+    const api = async (path) => {
+      const url = new URL(path, nodeURL); url.searchParams.set('chainPath', chainPath.join('/'));
+      const r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);   // a 404 is "unknown", never "zero"
+      return r.json();
+    };
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    // "auto": Selfhold for Chrome where installed, else Selfhold's window. No fee
+    // sponsor: Skylot's burns and fees are paid in coin.
+    const wallet = Sh.selfhold({ use: 'auto', hosts: () => [nodeURL] });
+    const moniker = M && M.createMoniker({ sdk });   // Nexus/moniker, at the hosts Nexus lists for it
+    const WALLET_MS = 5 * 60_000, CONFIRM_MS = 3 * 60_000;
+    // Selfhold's error codes, said plainly (Riposte's wording). `again`: the
+    // wallet's account for this site changed or is gone, so the page reads it again.
+    const walletText = (error) => {
+      const e = Sh.asSelfholdError(error), text = String(e.message ?? '');
+      switch (e.code) {
+        case 'PopupBlocked': return "Your browser blocked Selfhold's window. Allow pop-ups for this site, then try again.";
+        case 'Closed': return "Selfhold's window was closed. Nothing was sent.";
+        case 'Reloaded': return "Selfhold's window was reloaded. Nothing was signed; try again.";
+        case 'Declined': return /in a moment/i.test(text) ? 'Selfhold waits a few seconds after a decline. Try again in a moment.' : 'You declined it in Selfhold. Nothing was sent.';
+        case 'AccountChanged': return 'Selfhold now uses a different account for this site. Look again, then try again.';
+        case 'NotConnected': return "Selfhold isn't connected to this site anymore. Connect again, then try again.";
+        case 'NoWallet': return "Selfhold for Chrome isn't installed in this browser.";
+        case 'NeedsCoins': return `Your account holds ${e.balance ?? 0n} coin, and this needs ${e.needed ?? '?'} from your coins. Nothing was sent. Get testnet coin from the faucet.`;
+        default: return text || 'Selfhold did not answer.';
+      }
+    };
+    const again = (error) => ['AccountChanged', 'NotConnected'].includes(Sh.asSelfholdError(error).code);
+    // The lot at x,y as skylot.mjs's acts take it, read fresh.
+    async function lotAt(st, x, y) {
+      const value = await st.get(S.lotKey(x, y)), parsed = value === undefined ? undefined : S.parseLot(value);
+      if (!parsed) return undefined;
+      const b = await st.get(S.bldKey(x, y));
+      return { x, y, ...parsed, bld: b === undefined ? undefined : S.parseBld(b) };
+    }
+    class Said extends Error {}
+    const times = (amount, k) => (Number.isInteger(k) ? amount * BigInt(k) : BigInt(Math.round(Number(amount) * k)));
+    // The act for `kind`, built against a fresh read so its old values are current.
+    async function build(kind, a, me) {
+      const st = await view();
+      if (kind === 'claim') {
+        if ((await st.get(S.lotKey(a.x, a.y))) !== undefined) throw new Said('Someone else claimed this lot first.');
+        return S.claim(a.x, a.y, me, BigInt(a.price), a.style, Date.now());
+      }
+      if (kind === 'brand') return S.setBrand(me, a.brand, await st.get(S.brandKey(me)));
+      const lot = await lotAt(st, a.x, a.y);
+      if (!lot || !lot.bld) throw new Said('That lot has no building on the chain yet.');
+      if (kind === 'buy') {
+        if (lot.owner === me) throw new Said('You already own it.');
+        if (a.expect !== undefined && lot.price !== BigInt(a.expect)) throw new Said(`The price changed to ${lot.price} coin. Look again before you buy.`);
+        return S.buy(lot, me, times(lot.price, a.mult));
+      }
+      if (lot.owner !== me) throw new Said('Someone else owns this building now.');
+      if (kind === 'raise') return S.raise(lot, Date.now(), lot.price + BigInt(CFG.askDefault) * S.floorCost(lot.bld.floors));   // relist: the price rises by the floor's cost × askDefault, as offline
+      if (kind === 'restyle') return S.restyle(lot, a.style);
+      if (kind === 'reprice') return S.reprice(lot, BigInt(a.price));
+      throw new Said(`Unknown act: ${kind}`);
+    }
+    async function why(act, me) {
+      try { return await S.explain(await view(), act, await bridge.balance(me).catch(() => undefined)); }
+      catch { return 'The chain refused the write.'; }
+    }
+    Object.assign(bridge, {
+      nodeURL, chainPath,
+      /** The whole city, plain enough for the page: numbers for prices (display only). */
+      async city(me) {
+        const st = await view(), { lots, brands } = await S.city(st);
+        if (me && !brands.has(me)) { const v = await st.get(S.brandKey(me)); const b = v === undefined ? undefined : S.parseBrand(v); if (b) brands.set(me, b); }
+        return {
+          lots: [...lots.values()].map((l) => ({ x: l.x, y: l.y, owner: l.owner, price: Number(l.price), floors: l.bld?.floors ?? 0, style: l.bld?.style, at: l.bld?.at ?? 0 })),
+          brands: Object.fromEntries(brands),
+        };
+      },
+      info: () => api('/api/chain/info'),
+      fee: async () => BigInt((await api('/api/chain/info')).minRelayFee ?? 1),
+      balance: async (address) => BigInt((await api(`/api/state/account/${address}`)).balance ?? 0),
+      /** Selfhold, once Selfhold for Chrome has had a moment to reach the page (`lattice#initialized`). */
+      async wallet(ms = 800) {
+        if (!window.lattice) await new Promise((resolve) => { addEventListener('lattice#initialized', resolve, { once: true }); setTimeout(resolve, ms); });
+        return wallet;
+      },
+      /** "extension" (Selfhold for Chrome) or "window" (Selfhold's passkey window). */
+      walletKind: () => wallet.kind,
+      /** The address this site was given, or null; never asks. */
+      address: async () => (await wallet.address().catch(() => null)) ?? null,
+      /** Call it from a click: Selfhold's window is a pop-up. */
+      async connect() {
+        try { return await wallet.connect(); } catch (e) { throw new Error(walletText(e)); }
+      },
+      disconnect: () => wallet.disconnect().catch(() => {}),
+      // ---- Moniker: owners' verified @handles (undefined where none), and the cleaned names beside them
+      moniker: !!moniker,
+      handles: async (addresses) => (moniker && addresses.length ? moniker.handlesOf(addresses) : addresses.map(() => undefined)),
+      /** Moniker's label: a brand name cleaned of @, look-alikes, bidi and zero-width characters, else @handle, else the short ID. */
+      label: (address, { name, handle } = {}) => (M ? M.label(address, { name, handle }) : `${address.slice(0, 7)}…${address.slice(-4)}`),
+      displayName: (name) => (M ? M.displayName(name) : undefined),
+      shortAccount: (address) => (M ? M.shortAccount(address) : address),
+      handleURL: (handle) => `${M ? M.DEFAULTS.app : 'https://app.moniker.bio/'}#/@${encodeURIComponent(handle)}`,
+      /**
+       * One act, from building it to the chain having it. Resolves to
+       * { ok: true } once every key it names holds the new value, or
+       * { ok: false, text } saying why not; never throws, never resubmits.
+       */
+      async perform(kind, args) {
+        const me = await bridge.address();
+        if (!me) return { ok: false, text: 'Connect your wallet first.' };
+        let act;
+        try { act = await build(kind, args, me); } catch (e) { return { ok: false, text: e instanceof Said ? e.message : `Couldn't read the chain: ${e.message}` }; }
+        // Selfhold sets the fee itself (at least the host's minRelayFee) and takes no `fee`
+        // here; coinOnly: the burns and payments come from the account's coins, never a sponsor.
+        const { fee: _fee, ...request } = { ...S.writeRequest(chainPath, act), coinOnly: true };
+        try {
+          const silent = Symbol('silent');
+          const answer = await Promise.race([wallet.writeRecords(request, { account: me }), sleep(WALLET_MS).then(() => silent)]);
+          if (answer === silent) return { ok: false, maybe: true, text: 'Selfhold didn’t answer. The write may still land, so it won’t be sent again; look again in a minute.' };
+          if (answer === null) return { ok: false, text: 'Nothing was sent.' };
+        } catch (e) {
+          const code = Sh.asSelfholdError(e).code;
+          if (code !== 'Failed') return { ok: false, again: again(e), text: walletText(e) };
+          return { ok: false, text: `${await why(act, me)} Nothing was taken from you.` };
+        }
+        const deadline = Date.now() + CONFIRM_MS;
+        while (Date.now() < deadline) {
+          await sleep(2000);
+          let st; try { st = await view(); } catch { continue; }
+          let landed = true, moved = false;
+          for (const { key, oldValue, newValue } of act.actions) {
+            const now = await st.get(key);
+            if (now !== newValue) { landed = false; if (now !== oldValue) moved = true; }
+          }
+          if (landed) return { ok: true };
+          if (moved) return { ok: false, text: `${await S.explain(st, act, await bridge.balance(me).catch(() => undefined))} Nothing was taken from you.` };
+        }
+        return { ok: false, maybe: true, text: `Not confirmed after ${CONFIRM_MS / 60_000} minutes. ${await why(act, me)} If it was only slow, it may still land; it won’t be sent again.` };
+      },
+    });
+  })().catch((e) => { bridge.error = e; });
+}
 </script>
 </body>
 </html>
