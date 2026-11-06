@@ -2677,7 +2677,10 @@ document.getElementById('rotR').onclick = () => turnWithFade(1);
 document.getElementById('compassBtn').onclick = () => { if (!ROT) return; if (ROT === 2) turnView(1); turnWithFade(ROT === 1 ? -1 : 1); };   // back to north-up
 document.getElementById('helpBtn').onclick = () => toggleHelp();
 document.getElementById('helpClose').onclick = () => toggleHelp(false);
-document.getElementById('grindToggle').onchange = e => { state.grinding = e.target.checked; if (CHAIN.on) chainGrind(); };
+document.getElementById('grindToggle').onchange = e => {
+  state.grinding = e.target.checked;
+  if (CHAIN.on) { pref('grind', state.grinding ? 'on' : 'off'); chainGrind(); }
+};
 
 // ---------------------------------------------------------------- ACTIONS
 function buy(l) {
@@ -3018,11 +3021,14 @@ $('speedBtn').onclick = () => { state.speed = state.speed === 1 ? 3 : 1; $('spee
 if (CHAIN.on) {   // sky ads aren't on chain yet
   document.body.classList.add('chain');
   $('skyChip').hidden = true; $('grindTitle').textContent = 'Grinding coin';
+  // Real mining heats the device and drains a battery: off until the player switches it on, then remembered.
+  state.grinding = pref('grind') === 'on';
+  $('grindToggle').checked = state.grinding;
   $('grindChip').title = `This device mines for the fee sponsor, which pays your address in coin as you earn it. Selfhold's window can also pay a write's fee and up to ${SPONSOR_MOST} coin of it with work.`;
 }
 // The real grinder (client/grinder.mjs): runs while connected and switched on.
 function chainGrind() {
-  const want = CHAIN.on && state.grinding && CHAIN.me && CHAIN.bridge && CHAIN.bridge.grind;
+  const want = CHAIN.on && state.grinding && CHAIN.me && CHAIN.bridge && CHAIN.bridge.grind && !CHAIN.writing;
   if (CHAIN.grinder && (!want || CHAIN.grinder.address !== CHAIN.me)) { CHAIN.grinder.stop(); CHAIN.grinder = null; CHAIN.grind = null; }
   if (want && !CHAIN.grinder) {
     let paidOut = null;
@@ -3036,7 +3042,8 @@ function chainGrind() {
 function grindText() {
   if (!CHAIN.on) return state.grinding ? `+${CFG.grindPerSec.toFixed(1)} coin/s` : 'paused';
   if (!CHAIN.me) return 'connect to start';
-  if (!state.grinding) return 'paused';
+  if (!state.grinding) return 'off: switch on to earn coin';
+  if (CHAIN.writing) return 'paused while Selfhold writes';
   const g = CHAIN.grind;
   if (!g) return 'starting…';
   if (g.error) return g.error;
@@ -3056,7 +3063,7 @@ function renderHud() {
   const owns = [...state.lots.values()].filter(l => l.owner === 'you');
   let hint;
   if (FIRST_RUN && state.time < 25) hint = 'Drag to pan · scroll or pinch to zoom · Q / E to turn the city · press ? for all controls';
-  else if (!owns.length) hint = (CHAIN.on ? (state.grinding && CHAIN.me ? 'Your device is grinding coin. ' : '') : 'Your device is grinding for a sponsor. ') + 'Tap lots to compare prices: edge lots are cheapest, main-street lots get the most foot traffic.';
+  else if (!owns.length) hint = (CHAIN.on ? (!CHAIN.me ? '' : state.grinding ? 'Your device is grinding coin. ' : 'Switch on Grinding coin to earn coin. ') : 'Your device is grinding for a sponsor. ') + 'Tap lots to compare prices: edge lots are cheapest, main-street lots get the most foot traffic.';
   else if (!owns.some(l => l.sign)) hint = 'Select your building and put up a sign. It counts a view each time it shows up legibly on another player’s screen.';
   else if (owns.every(l => l.floors < 3)) hint = 'Raise your building: every floor climbs the skyline board, and taller signs are easier to spot.';
   else hint = CHAIN.on ? 'Climb the skyline: the top bar shows how many floors you need to pass the next building owner.' : 'Climb the skyline: the top bar shows how many floors you need to pass the next rival. They are raising too.';
@@ -3217,7 +3224,10 @@ async function chainAct(kind, l, args, label, cost = 0) {
   renderPanel();
   if (cost) SFX.coin();
   let r;
+  // The device's chip goes to Selfhold's window while it may work for this write.
+  CHAIN.writing = (CHAIN.writing || 0) + 1; chainGrind();
   try { r = await CHAIN.bridge.perform(kind, { x: l.x, y: l.y, ...args }); } catch (e) { r = { ok: false, text: (e && e.message) || 'The write failed.' }; }
+  finally { CHAIN.writing--; chainGrind(); }
   if (r.again) { CHAIN.me = null; CHAIN.synced = false; }   // Selfhold's account for this site changed or is gone: read it again
   await chainSync();
   l.pending = null;

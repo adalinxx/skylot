@@ -132,16 +132,26 @@ try {
   const clicked = await page.run(`(() => { const b = [...document.querySelectorAll('button')].find(b => /Connect with Selfhold/.test(b.textContent)); if (b) b.click(); return !!b; })()`);
   assert.ok(clicked, "no Connect with Selfhold button");
   console.log("✓ connected through Selfhold's client");
-  // Connected, the page grinds for the player's address on its own (headless: on processor workers).
+  // Grinding is off until the player switches it on; then the page grinds for
+  // the player's address (headless: on processor workers).
+  assert.ok(await page.run("!CHAIN.grinder"), "no grinding before the player asks");
+  await until("the chip offers grinding", async () => /switch on/.test(await page.run("document.getElementById('grindRate').textContent")), 60);
+  await page.run("(() => { const t = document.getElementById('grindToggle'); t.checked = true; t.onchange({ target: t }); })()");
   await until("the grinder runs", () => page.run("!!(CHAIN.grind && CHAIN.grind.rate > 0)"), 60);
   console.log(`✓ the page grinds: ${await page.run("document.getElementById('grindRate').textContent")}`);
   await until("the sponsor pays the player out", async () => (await balance(player.address)) >= PAYOUT_AT, 180);
   const earned = await balance(player.address);
   await until("the HUD shows the paid coin", async () => (await page.run("document.getElementById('coin').textContent")) === String(earned), 60);
   console.log(`✓ the sponsor paid the player ${earned} for the page's work; the HUD shows it`);
-  // Pause grinding through the chip's switch, so the balances below are the writes' alone.
+  assert.equal(await page.run("localStorage.getItem('curio.grind')"), "on", "the choice is remembered");
+  // A write pauses grinding while it is in flight, and it resumes after.
+  await page.run("(() => { CHAIN.writing = 1; chainGrind(); })()");
+  assert.ok(await page.run("!CHAIN.grinder"), "paused while Selfhold writes");
+  await page.run("(() => { CHAIN.writing = 0; chainGrind(); })()");
+  assert.ok(await page.run("!!CHAIN.grinder"), "resumed after");
+  // Off through the chip's switch, so the balances below are the writes' alone.
   await page.run("(() => { const t = document.getElementById('grindToggle'); t.checked = false; t.onchange({ target: t }); })()");
-  assert.equal(await page.run("CHAIN.grinder"), null);
+  assert.ok(await page.run("!CHAIN.grinder"));
 
   const [x, y] = [7, 7];
   await page.run(`(() => { state.selected = [${x}, ${y}]; buy(lot(${x}, ${y})); })()`);

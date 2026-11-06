@@ -152,9 +152,10 @@ try {
   await until("the sponsor's float", async () => (await balance(sponsor)) > 3000n);
   const log = openSync(`${root}/sponsor.log`, "a");
   const bin = process.env.LATTICE_SPONSOR || join(dirname(process.env.LATTICE), "lattice-sponsor");
-  sponsorChild = spawn(bin, ["--node", `http://127.0.0.1:${rpc}`, "--cookie-file", `${root}/chains/Nexus/.cookie`, "--key", keyFile,
+  const startSponsor = () => spawn(bin, ["--node", `http://127.0.0.1:${rpc}`, "--cookie-file", `${root}/chains/Nexus/.cookie`, "--key", keyFile,
     "--share-work", "2^12", "--fee", "1", "--most-pay", String(MOST_PAY), "--payout-at", String(PAYOUT_AT),
     "--storage-file", `${root}/sponsor-storage.json`, "--port", String(sponsorPort)], { stdio: ["ignore", log, log] });
+  sponsorChild = startSponsor();
   await until("the sponsor prices Skylot", async () => (await ask("work", { chain: CHAIN.join("/") }), true), 120);
   assert.equal(await balance(carol), 0n);
   assert.equal(await balance(dave), 0n);
@@ -190,7 +191,10 @@ try {
   const t0 = Date.now();
   let earned = 0n, payoutShares = 0;
   while (earned < PAYOUT_AT) {
-    const work = await ask("work", { chain: CHAIN.join("/"), payTo: erin.address });
+    let work;
+    // Payout work backs at most half a height's block: past it, wait for the next.
+    try { work = await ask("work", { chain: CHAIN.join("/"), payTo: erin.address }); }
+    catch (error) { if (error.status !== 503) throw error; await new Promise((r) => setTimeout(r, 1000)); continue; }
     assert.equal(work.sharesForFee, "0", "payout work buys no fee");
     for (const nonce of shares(work)) {
       try { earned = BigInt((await ask("shares", { assignment: work.assignment, nonce: String(nonce) })).credit); payoutShares++; }
@@ -200,9 +204,24 @@ try {
   }
   const status = await (await fetch(`${sponsorURL}/earnings?chain=${CHAIN.join("/")}&address=${erin.address}`)).json();
   assert.equal(status.payoutAt, String(PAYOUT_AT));
-  await until("the sponsor pays Erin out", async () => (await balance(erin)) >= PAYOUT_AT);
+  // The sponsor crashes the moment its payout is written down; restarted, it
+  // finds the payout on disk and sees it through: Erin is paid exactly once.
+  const book = () => { try { return JSON.parse(readFileSync(`${root}/lattice-sponsor-payouts.json`, "utf8")); } catch { return {}; } };
+  const pending = await until("the payout is written down", async () => book().pending?.find((p) => p.recipients.some((r) => r.address === erin.address)), 120);
+  sponsorChild.kill("SIGKILL");
+  await new Promise((r) => sponsorChild.once("exit", r));
+  const amount = BigInt(pending.recipients.find((r) => r.address === erin.address).amount);
+  console.log(`✓ the sponsor was killed with a payout of ${amount} to Erin pending at nonce ${pending.nonce}`);
+  sponsorChild = startSponsor();
+  await until("the restarted sponsor answers", async () => (await fetch(`${sponsorURL}/terms`)).ok, 60);
+  await until("the sponsor pays Erin out", async () => (await balance(erin)) >= amount);
+  await until("the payout settles", async () => !book().pending?.length, 180);
   const paid = await balance(erin);
-  console.log(`✓ Erin ground ${payoutShares} shares for coin and was paid ${paid} (${Math.round((Date.now() - t0) / 1000)}s)`);
+  assert.equal(paid, amount, "paid exactly once");
+  const h = Number((await api("/api/chain/info"))?.height ?? 0);
+  await until("more blocks", async () => Number((await api("/api/chain/info"))?.height ?? 0) >= h + 4, 120);
+  assert.equal(await balance(erin), amount, "and never again");
+  console.log(`✓ Erin ground ${payoutShares} shares for coin; after the crash she was paid ${paid}, once (${Math.round((Date.now() - t0) / 1000)}s)`);
   const left = BigInt((await (await fetch(`${sponsorURL}/earnings?chain=${CHAIN.join("/")}&address=${erin.address}`)).json()).earned);
   assert.ok(left < PAYOUT_AT, "what was paid left her earnings");
   assert.equal((await (await fetch(`${sponsorURL}/terms`)).json()).payoutAt, String(PAYOUT_AT));

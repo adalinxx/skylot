@@ -79,13 +79,16 @@ export function grind({ sponsor, chain, address, onStatus, cores }) {
     } finally { job.close(); }
   }
 
-  // One piece of work across `n` processor workers.
+  // One piece of work across `n` processor workers. Once it is stale (or
+  // failed), its workers finish their slice and take no more, and a share
+  // they still find is dropped: it belongs to work the sponsor has let go.
   function onCpu(workers, work) {
     return new Promise((resolve, reject) => {
-      let next = BigInt(work.startNonce), live = 0, stale = false;
+      let next = BigInt(work.startNonce), live = 0, stale = false, failed = null;
       const end = next + BigInt(work.count);
+      const settle = () => { if (live === 0) failed ? reject(failed) : resolve(); };
       const feed = (worker) => {
-        if (stopped || stale || next >= end) { if (live === 0) resolve(); return; }
+        if (stopped || stale || next >= end) { settle(); return; }
         const n = end - next < BigInt(CPU_SLICE) ? end - next : BigInt(CPU_SLICE);
         live++; worker.postMessage({ prefixHex: work.prefixHex, targetHex: work.shareTarget, start: String(next), count: String(n) });
         next += n;
@@ -93,10 +96,12 @@ export function grind({ sponsor, chain, address, onStatus, cores }) {
       for (const worker of workers) {
         worker.onmessage = async ({ data }) => {
           if (data.hashes) count(data.hashes);
-          if (data.share) { try { if (!(await share(work, BigInt(data.share)))) stale = true; } catch (e) { stale = true; reject(e); } }
+          if (data.share && !stale && !stopped) {
+            try { if (!(await share(work, BigInt(data.share)))) stale = true; } catch (e) { stale = true; failed ??= e; }
+          }
           if (data.done) { live--; feed(worker); }
         };
-        worker.onerror = (e) => { stale = true; reject(e); };
+        worker.onerror = (e) => { stale = true; failed ??= e; live = Math.max(0, live - 1); settle(); };
         feed(worker);
       }
     });
