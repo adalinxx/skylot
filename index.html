@@ -101,8 +101,7 @@
   <div class="chip"><small>Coin</small><b id="coin">0</b></div>
   <div class="chip" id="grindChip"><small>GPU grinding for sponsor</small><span id="grindRate"></span>
     <div><label class="muted"><input type="checkbox" id="grindToggle" checked> grinding</label></div></div>
-  <div class="chip" id="faucetChip" hidden><small>Get testnet coin</small><span class="muted" id="faucetText">The operator's faucet sends coin to your wallet address.</span>
-    <div><button class="secondary" id="copyAddr" hidden>Copy my address</button></div></div>
+  <div class="chip" id="workChip" hidden><small>Your device's work pays</small><span class="muted" id="workText"></span></div>
   <div class="chip"><small>Day</small><span id="day"></span><div class="bar"><div id="dayBar"></div></div></div>
   <div class="chip"><small>Your skyline rank</small><span id="rank">—</span></div>
   <div class="chip"><small>Speed</small><button class="secondary" id="speedBtn">1×</button></div>
@@ -184,14 +183,19 @@ const CFG = {
 // The <script type="module"> at the end loads client/skylot.mjs and exposes it
 // as window.SkylotChain; everything about records and rules lives there.
 const DEFAULT_NODE = 'https://lattice-testnet-apps-iad.fly.dev', DEFAULT_CHAIN = 'Nexus/testnet/skylot-125269';   // the testnet chain, launched 2026-11-06
+// The fee sponsor beside that node: the player's device grinds shares of its
+// block template, and it pays each write's fee and burn for them, as on
+// mainnet. Nobody is handed coin. SPONSOR_MOST is its --most-pay: the most
+// work pays within one write; the account's own coin (from selling) covers the rest.
+const DEFAULT_SPONSOR = 'https://lattice-testnet-apps-iad.fly.dev:8650/sponsor', SPONSOR_MOST = 1000;
 const CHAIN = (() => {
-  const q = new URLSearchParams(location.search), node = q.get('node') || DEFAULT_NODE, path = q.get('chain') || DEFAULT_CHAIN;
-  return { on: !q.has('offline') && !!node && !!path, node, path, bridge: null, lib: null, wallet: undefined, me: null,
+  const q = new URLSearchParams(location.search), node = q.get('node') || DEFAULT_NODE, path = q.get('chain') || DEFAULT_CHAIN, sponsor = q.get('sponsor') || DEFAULT_SPONSOR;
+  return { on: !q.has('offline') && !!node && !!path, node, path, sponsor, bridge: null, lib: null, wallet: undefined, me: null,
     balance: null, fee: null, synced: false, error: null, hasBrand: false, brandKey: '', handles: new Map(), youName: '' };
 })();
 // Tells the module what to load: the chain client in chain mode; offline over
 // http(s) only the record helpers (for safeLink); on file:// nothing at all.
-if (CHAIN.on) window.SKYLOT_BRIDGE = { node: CHAIN.node, chain: CHAIN.path };
+if (CHAIN.on) window.SKYLOT_BRIDGE = { node: CHAIN.node, chain: CHAIN.path, sponsor: CHAIN.sponsor };
 else if (/^https?:$/.test(location.protocol)) window.SKYLOT_BRIDGE = {};
 
 // ---------------------------------------------------------------- WORLD
@@ -2757,11 +2761,11 @@ function renderLog() {
   });
 }
 function secsToAfford(cost) {
-  if (CHAIN.on) return CHAIN.me && CHAIN.balance !== null && state.coin >= cost + Number(CHAIN.fee || 1) ? 0 : 1;   // chain: the write's fee too
+  if (CHAIN.on) return CHAIN.me && cost <= Number(CHAIN.balance ?? 0n) + SPONSOR_MOST ? 0 : 1;   // chain: work pays the fee and up to SPONSOR_MOST
   return state.coin >= cost ? 0 : Math.ceil((cost - state.coin) / CFG.grindPerSec);
 }
 const waitText = wait => !CHAIN.on ? `Affordable in about ${wait}s of grinding.` : !CHAIN.wallet ? 'Selfhold couldn’t load, so this page can’t write.'
-  : !CHAIN.me ? 'Connect with Selfhold to play.' : 'Not enough coin yet: get testnet coin from the faucet.';
+  : !CHAIN.me ? 'Connect with Selfhold to play.' : `Work pays up to ${SPONSOR_MOST} coin a write; the rest comes from your coin. Sell a building to earn it.`;
 let panelKey = '';
 function renderPanelView() {
   const el = $('panel'); const l = state.selected && lot(...state.selected);
@@ -3012,16 +3016,13 @@ $('flyBtn').onclick = () => { state.selSpecial = 'flight'; state.selected = null
 $('fwBtn').onclick = () => buyFireworks();
 $('soundBtn').onclick = () => { sfxInit(); sfxSet(!sfx.on); };
 $('speedBtn').onclick = () => { state.speed = state.speed === 1 ? 3 : 1; $('speedBtn').textContent = state.speed + '×'; };
-if (CHAIN.on) {   // coin comes from the operator's faucet for now; sky ads aren't on chain yet
+if (CHAIN.on) {   // Selfhold's window grinds and shows its own progress; sky ads aren't on chain yet
   document.body.classList.add('chain');
-  $('grindChip').hidden = true; $('skyChip').hidden = true; $('faucetChip').hidden = false;
-  $('copyAddr').onclick = () => { const a = CHAIN.me; if (!a) return;
-    if (navigator.clipboard) navigator.clipboard.writeText(a).then(() => note('Your address is copied. Send it to the faucet operator for testnet coin.'), () => note(`Your address: ${a}`));
-    else note(`Your address: ${a}`); };
+  $('grindChip').hidden = true; $('skyChip').hidden = true; $('workChip').hidden = false;
+  $('workText').textContent = `Selfhold grinds; the sponsor pays up to ${SPONSOR_MOST} coin a write`;
 }
 function renderHud() {
   $('coin').textContent = CHAIN.on ? (CHAIN.balance === null ? '—' : String(CHAIN.balance)) : Math.floor(state.coin);
-  if (CHAIN.on) { $('copyAddr').hidden = !CHAIN.me; $('faucetText').textContent = CHAIN.me ? 'The operator\'s faucet sends coin to your account.' : 'Connect with Selfhold, then ask the operator\'s faucet for coin.'; }
   if (E) $('vignette').style.opacity = (0.7 + 0.5 * E.n).toFixed(2);
   $('flyBtn').textContent = `✈ Fly a banner · ${CFG.bannerPerChar}/letter`; $('flyBtn').disabled = state.weather === 'storm';
   $('fwBtn').textContent = `🎆 Fireworks · ${CFG.fireworksCost}`; $('fwBtn').disabled = state.coin < CFG.fireworksCost;
@@ -3187,8 +3188,8 @@ async function chainAct(kind, l, args, label, cost = 0) {
   if (l.pending || (kind === 'buy' && l.owner === 'you')) return;   // connecting may show it's yours already
   if (kind === 'claim' && l.owner) { note(`Someone else owns (${l.x},${l.y}) now.`); return; }
   const fee = CHAIN.fee === null ? 1n : CHAIN.fee;
-  if (CHAIN.balance !== null && cost && isFinite(cost) && CHAIN.balance < BigInt(Math.ceil(cost)) + fee) {
-    note(`Not enough coin: this needs ${cost} coin plus the ${fee} coin fee, and you have ${CHAIN.balance}. Get testnet coin from the faucet.`); return; }
+  if (CHAIN.balance !== null && cost && isFinite(cost) && CHAIN.balance + BigInt(SPONSOR_MOST) < BigInt(Math.ceil(cost))) {
+    note(`Work pays up to ${SPONSOR_MOST} coin of a write, and this needs ${cost}; you hold ${CHAIN.balance}. Sell a building to earn the rest.`); return; }
   l.pending = { label, until: Infinity };   // never applied by tick(): the chain decides
   renderPanel();
   if (cost) SFX.coin();
@@ -3359,9 +3360,10 @@ if (want) {
       return r.json();
     };
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    // "auto": Selfhold for Chrome where installed, else Selfhold's window. No fee
-    // sponsor: Skylot's burns and fees are paid in coin.
-    const wallet = Sh.selfhold({ use: 'auto', hosts: () => [nodeURL] });
+    // "auto": Selfhold for Chrome where installed, else Selfhold's window. The
+    // window pays the fee and the burns (up to the sponsor's most-pay) with this
+    // device's work through the fee sponsor; Selfhold for Chrome pays from coin.
+    const wallet = Sh.selfhold({ use: 'auto', hosts: () => [nodeURL], ...(want.sponsor && { sponsor: () => want.sponsor }) });
     const moniker = M && M.createMoniker({ sdk });   // Nexus/moniker, at the hosts Nexus lists for it
     const WALLET_MS = 5 * 60_000, CONFIRM_MS = 3 * 60_000;
     // Selfhold's error codes, said plainly (Riposte's wording). `again`: the
@@ -3376,7 +3378,9 @@ if (want) {
         case 'AccountChanged': return 'Selfhold now uses a different account for this site. Look again, then try again.';
         case 'NotConnected': return "Selfhold isn't connected to this site anymore. Connect again, then try again.";
         case 'NoWallet': return "Selfhold for Chrome isn't installed in this browser.";
-        case 'NeedsCoins': return `Your account holds ${e.balance ?? 0n} coin, and this needs ${e.needed ?? '?'} from your coins. Nothing was sent. Get testnet coin from the faucet.`;
+        case 'NeedsCoins': return e.sponsor == null
+          ? `Your account holds ${e.balance ?? 0n} coin, and this needs ${e.needed ?? '?'} from your coins. Nothing was sent. (Selfhold for Chrome pays from coin only; Selfhold's window can pay with work.)`
+          : `${{ down: "The fee sponsor isn't answering right now, so this device's work can't pay.", dear: "This device can't do that much work in reasonable time.", most: `The fee sponsor pays at most ${SPONSOR_MOST} coin of one write, and your coin doesn't cover the rest.` }[e.sponsor] ?? "The fee sponsor couldn't pay for this write."} Nothing was sent.`;
         default: return text || 'Selfhold did not answer.';
       }
     };
@@ -3462,8 +3466,8 @@ if (want) {
         let act;
         try { act = await build(kind, args, me); } catch (e) { return { ok: false, text: e instanceof Said ? e.message : `Couldn't read the chain: ${e.message}` }; }
         // Selfhold sets the fee itself (at least the host's minRelayFee) and takes no `fee`
-        // here; coinOnly: the burns and payments come from the account's coins, never a sponsor.
-        const { fee: _fee, ...request } = { ...S.writeRequest(chainPath, act), coinOnly: true };
+        // here. No coinOnly: the sponsor may pay the burns and payments for work.
+        const { fee: _fee, ...request } = S.writeRequest(chainPath, act);
         try {
           const silent = Symbol('silent');
           const answer = await Promise.race([wallet.writeRecords(request, { account: me }), sleep(WALLET_MS).then(() => silent)]);

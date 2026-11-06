@@ -1,5 +1,6 @@
-// Testnet faucet: sends Skylot coin from the faucet account (premined at
-// genesis) to a player. Run by the operator; the key file never goes in the
+// Sends Skylot coin from the operator account (premined at genesis): used to
+// lend the fee sponsor its float, never to hand players coin (they pay with
+// work, as on mainnet). Run by the operator; the key file never goes in the
 // repo.
 //
 //   node client/faucet.mjs --node https://<host> --chain Nexus/testnet/skylot-xxxxxx \

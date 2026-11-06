@@ -288,5 +288,6 @@ To fill in after playtesting. Questions to answer:
 
 - **Chain:** `Nexus/testnet/skylot-125269`, launched 2026-11-06 from `chain/spec.json` and `chain/skylot_policy.wasm` (CID `bafyreibklgjauwc2o7o5adyhg6nfbatmgokoapypu7ulw5gotmuanw65fu`), merge-mined by the operator's Nexus miner.
 - **Read and write:** `https://lattice-testnet-apps-iad.fly.dev` (and its twin in ams), the page's default node.
-- **Faucet:** the genesis premine and the chain's mining rewards go to a test key the operator keeps outside this repository. Players get coin with `node client/faucet.mjs --node https://lattice-testnet-apps-iad.fly.dev --chain Nexus/testnet/skylot-125269 --key <faucet key file> --to <address>`.
+- **Coin:** work, as on mainnet. The fee sponsor at `https://lattice-testnet-apps-iad.fly.dev:8650/sponsor` (the one Riposte uses) prices Skylot writes at about 2 coin a share of 2^24 hashes and pays at most 1000 coin a write. On one CPU thread a share takes about 9 s, so a mid-priced lot (84) is a few minutes of CPU work and seconds on a GPU; Selfhold's window gives up after about 2 minutes (`dear`).
+- **Sponsor float:** the sponsor pays from its own Skylot balance. The genesis premine and the chain's mining rewards go to an operator key kept outside this repository, which lent the sponsor 1,000,000 on 2026-11-06 (`node client/faucet.mjs ... --to <sponsor address> --amount N`); top it up the same way. Players are never sent coin.
 - `?offline` still opens the offline game.

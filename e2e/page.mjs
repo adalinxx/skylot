@@ -128,7 +128,7 @@ try {
   const [x, y] = [7, 7];
   await page.run(`(() => { state.selected = [${x}, ${y}]; buy(lot(${x}, ${y})); })()`);
   await until("claim lands on chain", async () => (await S.city(await chainView())).lots.get(`${x},${y}`)?.owner === player.address);
-  await until("page shows the building as yours", () => page.run(`lot(${x},${y}).owner === 'you' && lot(${x},${y}).floors === 1`), 60);
+  await until("page shows the building as yours", () => page.run(`lot(${x},${y}).owner === 'you' && lot(${x},${y}).floors === 1 && !lot(${x},${y}).pending`), 60);   // the page takes no new write while one is pending
   console.log(`✓ bought (${x},${y}) through the page; the chain and the page agree`);
 
   const listed = (await S.city(await chainView())).lots.get(`${x},${y}`).price;

@@ -83,12 +83,19 @@ for the new owner. Rules say nothing about bots: an account is an account.
 
 ## Coin
 
-- The spec premines a faucet account at genesis. On testnet, its key is kept by
-  the operator, outside the repo; `client/faucet.mjs` sends players coin.
+- Players earn coin with work, the same on testnet and mainnet: Selfhold's
+  window grinds shares of a fee sponsor's (lattice-sponsor's) block template,
+  and the sponsor pays the write's fee and, up to its `--most-pay`, its burn or
+  payment. A write that costs more takes the rest from the account's coin,
+  earned by selling. `e2e/sponsor.mjs` plays claims, raises and a purchase
+  this way from a 0-coin account.
+- The sponsor pays from its float on the Skylot chain: block rewards it wins
+  with players' shares, plus what the operator lends it.
 - Block rewards go to whoever mines the chain.
-- Writes cost the chain's `minRelayFee` (the trial host's setting).
-- Later: in-browser grinding through the fee sponsor (`/sponsor/work`), which
-  is the brief's "grind for a sponsor" loop.
+- Writes cost the chain's `minRelayFee` (the host's setting).
+- The spec premines an operator account at genesis. Its key is kept outside
+  the repo; `client/faucet.mjs` moves coin from it (on testnet, once, to fund the
+  sponsor's float). Players are never sent coin.
 
 ## Not on chain yet
 
