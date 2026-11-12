@@ -3385,15 +3385,24 @@ if (want) {
     // Moniker is a nicety: if it can't load or be read, owners show as their brand or short ID.
     const M = await import('./app/vendor/moniker/index.mjs').catch(() => null);
     const nodeURL = want.node.replace(/\/+$/, ''), chainPath = want.chain.split('/').filter(Boolean);
-    const volumes = new sdk.VolumeClient(new sdk.HTTPVolumeTransport(`${nodeURL}/volumes`, { chainPath }));
-    const load = St.volumeLoader(volumes, sdk.decodeDagCbor);   // trie nodes are immutable: kept for the session
-    const view = async () => St.view(load, (await St.tip(sdk, nodeURL, chainPath, volumes)).generalStateCID);
-    const api = async (path) => {
-      const url = new URL(path, nodeURL); url.searchParams.set('chainPath', chainPath.join('/'));
+    // Reads go to the chain's nodes: nodeURL if it serves the chain, then the
+    // hosts its directory declares (the SDK's ChainNodes), so the chain can move hosts.
+    const nodes = new sdk.ChainNodes(nodeURL, { fetch: (...args) => fetch(...args) });
+    const reads = new Map();   // per node: its Volumes and a loader (trie nodes are immutable: kept for the session)
+    const on = (url) => {
+      if (!reads.has(url)) { const volumes = new sdk.VolumeClient(new sdk.HTTPVolumeTransport(`${url}/volumes`, { chainPath })); reads.set(url, { volumes, load: St.volumeLoader(volumes, sdk.decodeDagCbor) }); }
+      return reads.get(url);
+    };
+    const view = () => nodes.read(chainPath, async (node) => {
+      const { volumes, load } = on(node.url);
+      return St.view(load, (await St.tip(sdk, node.url, chainPath, volumes)).generalStateCID);
+    });
+    const api = (path) => nodes.read(chainPath, async (node) => {
+      const url = new URL(path, node.url); url.searchParams.set('chainPath', chainPath.join('/'));
       const r = await fetch(url, { cache: 'no-store' });
       if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);   // a 404 is "unknown", never "zero"
       return r.json();
-    };
+    });
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     // "auto": Selfhold for Chrome where installed, else Selfhold's window. The
     // window pays the fee and the burns (up to the sponsor's most-pay) with this
